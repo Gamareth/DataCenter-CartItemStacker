@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <AssemblyName>CartItemStacker</AssemblyName>
+    <RootNamespace>CartItemStacker</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <DataCenterGamePath Condition="'$(DataCenterGamePath)' == ''">$(DATA_CENTER_GAME_PATH)</DataCenterGamePath>
+    <MelonLoaderManagedPath>$(DataCenterGamePath)\MelonLoader\net6</MelonLoaderManagedPath>
+    <Il2CppAssemblyPath>$(DataCenterGamePath)\MelonLoader\Il2CppAssemblies</Il2CppAssemblyPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="*.cs" Exclude="CartStacker.Targets.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="MelonLoader"><HintPath>$(MelonLoaderManagedPath)\MelonLoader.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(MelonLoaderManagedPath)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2CppInterop.Runtime"><HintPath>$(MelonLoaderManagedPath)\Il2CppInterop.Runtime.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Assembly-CSharp"><HintPath>$(Il2CppAssemblyPath)\Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(Il2CppAssemblyPath)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(Il2CppAssemblyPath)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.PhysicsModule"><HintPath>$(Il2CppAssemblyPath)\UnityEngine.PhysicsModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Il2Cppmscorlib"><HintPath>$(Il2CppAssemblyPath)\Il2Cppmscorlib.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <Target Name="ValidateDataCenterGamePath" BeforeTargets="ResolveReferences">
+    <Error
+      Condition="'$(DataCenterGamePath)' == ''"
+      Text="Set DATA_CENTER_GAME_PATH or pass /p:DataCenterGamePath=... to the build." />
+    <Error
+      Condition="!Exists('$(Il2CppAssemblyPath)\Assembly-CSharp.dll')"
+      Text="Data Center IL2CPP assemblies were not found. Run the game through MelonLoader once, then verify DataCenterGamePath." />
+  </Target>
+</Project>

@@ -1,0 +1,59 @@
+name: Bug report
+description: Report a reproducible Cart Item Stacker problem.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Please use a copied test save when reproduction could affect cargo.
+  - type: input
+    id: mod-version
+    attributes:
+      label: Mod version
+      placeholder: 0.9.0-rc.1
+    validations:
+      required: true
+  - type: input
+    id: melonloader-version
+    attributes:
+      label: MelonLoader version
+      placeholder: 0.7.3
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: List the exact item order and interactions.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: dropdown
+    id: save-load
+    attributes:
+      label: Did this happen immediately after loading a save?
+      options:
+        - "No"
+        - "Yes"
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: MelonLoader log
+      description: Attach MelonLoader/Latest.log or paste the relevant section.
+    validations:
+      required: true
