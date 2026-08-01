@@ -26,3 +26,7 @@ In short: everything a data center technician with ambitious stacking plans coul
 Full installation instructions, source code, releases, and issue reporting:
 
 https://github.com/Gamareth/DataCenter-CartItemStacker
+
+Support future development on Ko-fi:
+
+https://ko-fi.com/gamareth

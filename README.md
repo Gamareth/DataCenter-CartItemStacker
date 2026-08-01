@@ -62,6 +62,11 @@ Please use the GitHub issue template and attach:
 - whether the trolley was loaded from a save;
 - screenshots when alignment or physics is involved.
 
+## Support
+
+If you enjoy Cart Item Stacker and would like to support future development,
+you can [support Gamareth on Ko-fi](https://ko-fi.com/gamareth).
+
 ## License
 
 Copyright (C) 2026 Gamareth.
