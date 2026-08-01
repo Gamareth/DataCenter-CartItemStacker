@@ -10,6 +10,7 @@
   <ItemGroup>
     <Compile Include="..\..\src\CartItemStacker\CapacityLimits.cs" Link="CapacityLimits.cs" />
     <Compile Include="..\..\src\CartItemStacker\CapacityRules.cs" Link="CapacityRules.cs" />
+    <Compile Include="..\..\src\CartItemStacker\LayerCompactionRules.cs" Link="LayerCompactionRules.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
 </Project>

@@ -118,6 +118,17 @@ internal static class TrolleyClickPatch
         {
             TrolleyPhysicsIsolation.IgnoreStoredItem(held);
         }
+        else if (proceed &&
+            held is not null &&
+            !BoxLayerLayout.IsBox(held) &&
+            ServerSectionCatalog.IsAllowed(held, out _))
+        {
+            // Loaded cargo becomes part of the trolley hierarchy. Keep a held
+            // server's restored Rigidbody and colliders out of physics until
+            // its native placement animation has fully settled.
+            TrolleyPhysicsIsolation.IgnoreStoredItem(held);
+            IncomingEquipmentIsolation.Suppress(held);
+        }
         return proceed;
     }
 
@@ -142,9 +153,39 @@ internal static class TrolleyClickPatch
             TrolleyItemInteraction.SchedulePlacementFinalize(
                 __state.Held, "placement");
         }
+        else if (__state.Held is not null &&
+            held is not null &&
+            held.Pointer == __state.Held.Pointer)
+        {
+            // Native placement failed and the item stayed in hand.
+            IncomingEquipmentIsolation.Restore(__state.Held);
+            TrolleyPhysicsIsolation.RestoreItem(__state.Held);
+        }
         ModSettings.Debug(
             $"Trolley click AFTER: held='{held?.name ?? "<none>"}', " +
             $"used={after}/{__instance?.usedPositions?.Length ?? 0}, delta={after - __state.Used}.");
+    }
+
+    private static System.Exception Finalizer(
+        TrolleyLoadingBay __instance,
+        ClickState __state,
+        System.Exception __exception)
+    {
+        if (__exception is null || !TrolleyContext.LayoutEnabled)
+            return __exception;
+
+        DynamicTargetAllocator.CancelPendingPlacement(
+            __instance,
+            "native trolley placement exception");
+        if (__state.Held is not null)
+        {
+            IncomingEquipmentIsolation.Restore(__state.Held);
+            TrolleyPhysicsIsolation.RestoreItem(__state.Held);
+        }
+        Melon<CartItemStacker.Mod>.Logger.Warning(
+            $"Rolled back the failed trolley placement transaction for " +
+            $"'{__state.Held?.name ?? "<unknown>"}'.");
+        return __exception;
     }
 }
 
@@ -165,22 +206,12 @@ internal static class HeldItemCargoClickPatch
 
         var target = __instance.interactable as UsableObject;
         var bay = TrolleyContext.Current;
-        if (ModuleTrayLayout.IsModuleTrayInteraction(held, target))
+        if (ModuleTrayLayout.IsModule(held) &&
+            target is not null &&
+            TrolleyRemovalPatch.BelongsToTrolley(bay, target))
         {
-            if (ModuleTrayLayout.TryRouteModuleToEmptyTray(
-                held, target, out var destination))
-            {
-                __instance.i_interact = false;
-                ModSettings.Debug(
-                    $"Routed SFP from full tray '{target.name}' to empty " +
-                    $"trolley tray '{destination.name}'.");
-            }
-            else
-            {
-                ModSettings.Debug(
-                    $"Preserving native SFP interaction from '{held.name}' " +
-                    $"to trolley tray '{target.name}'.");
-            }
+            // Loose SFP modules remain entirely native. In particular, never
+            // reinterpret a click on stored cargo as trolley cargo placement.
             return;
         }
 
@@ -256,8 +287,12 @@ internal static class TrolleyRemovalPatch
         var bay = TrolleyContext.Current;
         var held = DynamicTargetAllocator.GetHeldObject();
         if (held is not null &&
-            ModuleTrayLayout.IsModuleTrayInteraction(held, __instance))
+            ModuleTrayLayout.IsModule(held) &&
+            BelongsToTrolley(bay, __instance))
         {
+            // Let the game's native SFPBox interaction decide whether this
+            // specifically clicked tray accepts the held module. The mod only
+            // observes the resulting tray-content change and rearranges trays.
             __state = new RemovalState(
                 false, false, false, false, false,
                 -1, 0, -1, -1, -1);

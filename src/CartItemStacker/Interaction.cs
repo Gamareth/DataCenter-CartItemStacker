@@ -16,9 +16,15 @@ internal static class TrolleyItemInteraction
     internal static void Reset()
     {
         PlacementTokens.Clear();
+        IncomingEquipmentIsolation.Reset();
+        TrolleyPhysicsDiagnostics.Reset();
+        CargoMovementIndicator.Reset();
     }
 
-    internal static void SchedulePlacementFinalize(UsableObject item, string reason)
+    internal static void SchedulePlacementFinalize(
+        UsableObject item,
+        string reason,
+        bool ensureTrolleyParent = false)
     {
         if (item is null)
             return;
@@ -29,14 +35,15 @@ internal static class TrolleyItemInteraction
             : 1;
         PlacementTokens[pointer] = token;
         MelonCoroutines.Start(FinalizePlacementAfterNativeDelay(
-            item, pointer, token, reason));
+            item, pointer, token, reason, ensureTrolleyParent));
     }
 
     private static IEnumerator FinalizePlacementAfterNativeDelay(
         UsableObject item,
         System.IntPtr pointer,
         int token,
-        string reason)
+        string reason,
+        bool ensureTrolleyParent)
     {
         if (ModSettings.DebugLogging)
         {
@@ -69,16 +76,65 @@ internal static class TrolleyItemInteraction
 
         if (item is null || item.objectInHands || !item.isOnTrolley)
         {
+            IncomingEquipmentIsolation.Restore(item);
             PlacementTokens.Remove(pointer);
             yield break;
         }
 
+        var equipmentWasSuppressed =
+            IncomingEquipmentIsolation.IsSuppressed(item);
+        if (equipmentWasSuppressed)
+        {
+            try
+            {
+                var bay = TrolleyContext.Current;
+                if (bay?.transform is not null &&
+                    item.transform is not null &&
+                    !item.transform.IsChildOf(bay.transform))
+                    item.transform.SetParent(bay.transform, true);
+            }
+            catch (System.Exception exception)
+            {
+                IncomingEquipmentIsolation.Restore(item);
+                PlacementTokens.Remove(pointer);
+                Melon<CartItemStacker.Mod>.Logger.Warning(
+                    "Could not settle incoming equipment safely: " +
+                    exception.Message);
+                yield break;
+            }
+
+        }
+
         try
         {
+            var bay = TrolleyContext.Current;
+            if (ensureTrolleyParent &&
+                bay?.transform is not null &&
+                item.transform is not null &&
+                !item.transform.IsChildOf(bay.transform))
+            {
+                item.transform.SetParent(bay.transform, true);
+                ModSettings.Debug(
+                    $"Rebound loaded '{item.name}' to the trolley after " +
+                    "its native placement animation.");
+            }
+
+            if (!StoredCargoPhysics.EnsureOwnKinematicBody(
+                    item, $"placement finalization ({reason})"))
+            {
+                PlacementTokens.Remove(pointer);
+                yield break;
+            }
+
             var rootCollider = item.GetComponent<Collider>();
             var rootWasEnabled = rootCollider is not null && rootCollider.enabled;
-            if (rootCollider is not null && !rootCollider.enabled)
+            if (!equipmentWasSuppressed &&
+                rootCollider is not null &&
+                !rootCollider.enabled)
                 rootCollider.enabled = true;
+
+            if (equipmentWasSuppressed)
+                IncomingEquipmentIsolation.Restore(item);
 
             var previousTag = item.gameObject.tag;
             var previousLayer = item.gameObject.layer;
@@ -89,7 +145,23 @@ internal static class TrolleyItemInteraction
                 item);
             if (PatchPanelLayerLayout.IsPatchPanel(item))
                 PatchPanelLayerLayout.NormalizeStoredPose(
-                    TrolleyContext.Current, item);
+                    bay, item);
+            else if (bay?.transform is not null)
+            {
+                var stack = BoxLayerLayout.IsBox(item)
+                    ? BoxLayerLayout.GetItemStack(item)
+                    : item.trolleySlotIndex >= 0 &&
+                        item.trolleySlotIndex < CartLayout.ServerSlots
+                        ? item.trolleySlotIndex / CartLayout.SlotsPerStack
+                        : -1;
+                if (stack >= 0)
+                {
+                    BoxLayerLayout.SnapStackToAbsoluteTargets(
+                        bay, stack, $"{item.name} placement finalization");
+                    PatchPanelLayerLayout.NormalizeStackAbsolute(
+                        bay, stack, $"{item.name} placement finalization");
+                }
+            }
             Physics.SyncTransforms();
             PlacementPoseDiagnostics.LogItem(
                 "finalize post-correction t=0.65s",
@@ -116,9 +188,12 @@ internal static class TrolleyItemInteraction
                 $"enabled colliders {enabledCount}/{colliderCount}, " +
                 $"reasserted {reasserted} trolley pair(s).");
 
+            TrolleyPhysicsDiagnostics.Arm(bay, item, reason);
+
         }
         catch (System.Exception exception)
         {
+            IncomingEquipmentIsolation.Restore(item);
             Melon<CartItemStacker.Mod>.Logger.Warning(
                 $"Could not finalize stored item after native delay: {exception.Message}");
         }
@@ -148,6 +223,77 @@ internal static class TrolleyItemInteraction
                 $"tag '{previousTag}'->'Interact', layer {previousLayer}->0.");
         }
     }
+}
+
+internal static class IncomingEquipmentIsolation
+{
+    private readonly struct ColliderState
+    {
+        internal readonly Collider Collider;
+        internal readonly bool Enabled;
+
+        internal ColliderState(Collider collider, bool enabled)
+        {
+            Collider = collider;
+            Enabled = enabled;
+        }
+    }
+
+    private static readonly Dictionary<System.IntPtr, List<ColliderState>>
+        Suppressed = new();
+
+    internal static bool IsSuppressed(UsableObject item) =>
+        item is not null && Suppressed.ContainsKey(item.Pointer);
+
+    internal static void Suppress(UsableObject item)
+    {
+        if (item?.transform is null || Suppressed.ContainsKey(item.Pointer))
+            return;
+
+        var states = new List<ColliderState>();
+        foreach (var collider in item.GetComponentsInChildren<Collider>(true))
+        {
+            if (collider is null)
+                continue;
+            states.Add(new ColliderState(collider, collider.enabled));
+            collider.enabled = false;
+        }
+        Suppressed[item.Pointer] = states;
+        Physics.SyncTransforms();
+        ModSettings.Debug(
+            $"Suppressed {states.Count} collider(s) for incoming equipment " +
+            $"'{item.name}'.");
+    }
+
+    internal static void Reassert(UsableObject item)
+    {
+        if (item is null ||
+            !Suppressed.TryGetValue(item.Pointer, out var states))
+            return;
+
+        foreach (var state in states)
+            if (state.Collider is not null)
+                state.Collider.enabled = false;
+        Physics.SyncTransforms();
+    }
+
+    internal static void Restore(UsableObject item)
+    {
+        if (item is null ||
+            !Suppressed.TryGetValue(item.Pointer, out var states))
+            return;
+
+        foreach (var state in states)
+            if (state.Collider is not null)
+                state.Collider.enabled = state.Enabled;
+        Suppressed.Remove(item.Pointer);
+        Physics.SyncTransforms();
+        ModSettings.Debug(
+            $"Restored {states.Count} collider(s) for settled equipment " +
+            $"'{item.name}'.");
+    }
+
+    internal static void Reset() => Suppressed.Clear();
 }
 
 internal static class PlacementPoseDiagnostics
@@ -276,13 +422,19 @@ internal static class TrolleyStackBoundaryPatch
         if (!TrolleyContext.LayoutEnabled ||
             __instance is null ||
             bay is null ||
-            _pos is null)
+            _pos is null ||
+            !TrolleyContext.IsRegistered(__instance))
             return;
 
         var size = System.Math.Max(1, __instance.sizeInU);
         var targets = bay.positionsOnTrolley;
         if (targets is null)
             return;
+        var nativeTemporaryTarget =
+            bay.temporaryTransformToStoreInCorrectSpot;
+        var usesNativeTemporaryTarget =
+            nativeTemporaryTarget is not null &&
+            nativeTemporaryTarget.Pointer == _pos.Pointer;
 
         PlacementPoseDiagnostics.LogMoveTarget(
             "MoveToStorage input",
@@ -291,50 +443,25 @@ internal static class TrolleyStackBoundaryPatch
             _pos,
             _positionIndex);
 
-        if (PatchPanelLayerLayout.TryGetPendingNativeTarget(
+        var resolvedLogicalSlot = -1;
+        if (CartPoseResolver.ApplyStorageRootPose(
             bay,
             __instance,
-            out var patchSlot,
-            out var patchTarget))
+            _pos,
+            _positionIndex,
+            out resolvedLogicalSlot))
         {
-            // TrolleyLoadingBay restores an already-used slot transform to its
-            // native pose after our click Prefix. The first panel therefore
-            // received the prepared patch pose, while panels 2+ animated to
-            // the default trolley slot and were only corrected at finalize.
-            // Reapply the authoritative pose at the final MoveToStorage
-            // boundary so every panel's LeanTween starts with the right target.
-            PatchPanelLayerLayout.ApplyPose(
-                bay,
-                patchTarget,
-                __instance);
-            _positionIndex = patchSlot;
-            _pos = patchTarget;
-            __instance.trolleySlotIndex = patchSlot;
-            bay.temporaryTransformToStoreInCorrectSpot = patchTarget;
+            if (resolvedLogicalSlot >= 0 &&
+                resolvedLogicalSlot < CartLayout.TotalSlots)
+            {
+                _positionIndex = resolvedLogicalSlot;
+                __instance.trolleySlotIndex = resolvedLogicalSlot;
+            }
             ModSettings.Debug(
-                $"Forced patch-panel native animation to logical slot " +
-                $"{patchSlot}.");
-        }
-        else if (CableWheelLayout.TryGetPendingNativeTarget(
-            bay,
-            __instance,
-            out var cableSlot,
-            out var cableTarget))
-        {
-            // TrolleyLoadingBay can restore the selected slot to its native
-            // pose after our click Prefix. Reapply the cable pose here so the
-            // actual MoveToStorage animation receives the flat-wheel target.
-            CableWheelLayout.ApplyTargetPose(
-                bay,
-                cableTarget,
-                cableSlot);
-            _positionIndex = cableSlot;
-            _pos = cableTarget;
-            __instance.trolleySlotIndex = cableSlot;
-            bay.temporaryTransformToStoreInCorrectSpot = cableTarget;
-            ModSettings.Debug(
-                $"Forced cable-wheel native animation to logical slot " +
-                $"{cableSlot}.");
+                $"Resolved native storage root pose for '{__instance.name}'" +
+                (resolvedLogicalSlot >= 0
+                    ? $" at logical slot {resolvedLogicalSlot}."
+                    : "."));
         }
 
         PlacementPoseDiagnostics.LogMoveTarget(
@@ -344,7 +471,9 @@ internal static class TrolleyStackBoundaryPatch
             _pos,
             _positionIndex);
 
-        var targetSlot = FindTargetIndex(targets, _pos);
+        var targetSlot = resolvedLogicalSlot >= 0
+            ? resolvedLogicalSlot
+            : FindTargetIndex(targets, _pos);
         if (targetSlot < 0)
             return;
 
@@ -375,9 +504,19 @@ internal static class TrolleyStackBoundaryPatch
             used[i] = 1;
 
         _positionIndex = newStart;
-        _pos = targets[newStart];
+        _pos = usesNativeTemporaryTarget
+            ? nativeTemporaryTarget
+            : targets[newStart];
+        CartPoseResolver.ApplyStorageRootPose(
+            bay,
+            __instance,
+            _pos,
+            newStart,
+            out _);
         __instance.trolleySlotIndex = newStart;
-        bay.temporaryTransformToStoreInCorrectSpot = targets[newStart];
+        if (usesNativeTemporaryTarget)
+            bay.temporaryTransformToStoreInCorrectSpot =
+                nativeTemporaryTarget;
 
         ModSettings.Debug(
             $"Redirected {size}U item from slot {targetSlot} to slot {newStart}.");

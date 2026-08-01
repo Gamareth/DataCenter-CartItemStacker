@@ -12,6 +12,8 @@ The result is the kind of capacity a real-world data center technician might squ
 
 - Servers, switches, firewalls, boxed racks, and patch panels neatly arranged across two vertical equipment stacks of up to 42U each.
 - Dedicated storage for SFP module trays, without modifying the trolley model.
+- Native manual SFP insertion: click the specific tray you want to fill, just
+  as in the unmodded game. The tray is then rearranged within the trolley layout.
 - Two dedicated stacks for cable spools.
 - Automatic sorting and smooth compaction when items are removed.
 - Configurable equipment and cable-spool capacity.
@@ -25,7 +27,7 @@ In short: everything a data center technician with ambitious stacking plans coul
 - [MelonLoader](https://github.com/LavaGang/MelonLoader) 0.7.3 or a compatible 0.7.x release.
 - A single-player game. Multiplayer and co-op are currently untested and unsupported.
 
-The release candidate was built against Unity `6000.4.12f1`, MelonLoader `0.7.3 Open-Beta`, and the current Data Center IL2CPP assemblies available on July 31, 2026.
+Version 1.0.0 was built against Unity `6000.4.12f1`, MelonLoader `0.7.3 Open-Beta`, and the Data Center IL2CPP assemblies available on August 1, 2026.
 
 ## Installation
 
@@ -42,6 +44,7 @@ Configuration changes are loaded when the game starts.
 | `EquipmentStackMaxUnits` | `42` | `24` through `42` | Limits newly accepted equipment per stack without removing physical slots. |
 | `CableSpoolsPerStack` | `4` | `1` through `8` | Limits newly accepted cable spools per cable stack. |
 | `AnimationSpeed` | `1.0` | `0.5` through `2.0` | Controls sorting and compaction animation speed. |
+| `RestackCargoIndicator` | `true` | `true`, `false` | Pulses cargo orange and charcoal only during save-load restacking, then shows ready green for one second. |
 | `DebugLogging` | `false` | `true`, `false` | Enables detailed placement diagnostics for bug reports. |
 
 Lowering a capacity never removes or relocates existing cargo merely because it is above the new limit. New items are rejected until the configured limit permits them.

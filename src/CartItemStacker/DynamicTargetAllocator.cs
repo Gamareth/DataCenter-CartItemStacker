@@ -23,6 +23,7 @@ internal static class DynamicTargetAllocator
     private static int _pendingRackSize;
     private static int _pendingRackStart = -1;
     private static UsableObject _pendingRackItem;
+    private static bool _pendingFirstServerClearance;
 
     internal static int Split => _split;
 
@@ -34,6 +35,8 @@ internal static class DynamicTargetAllocator
         var held = GetHeldObject();
         if (held is null)
             return true;
+
+        CancelPendingPlacement(bay, "new trolley click");
 
         if (ModuleTrayLayout.TryGetTray(held, out var moduleTray))
             return ModuleTrayLayout.PreparePlacement(bay, moduleTray);
@@ -108,9 +111,13 @@ internal static class DynamicTargetAllocator
                 record.StartsWith(
                     "ShopItemSO_Server_",
                     System.StringComparison.OrdinalIgnoreCase);
-            SetTargetRotation(bay, bay.positionsOnTrolley[start], held);
+            CartPoseResolver.ApplyLayoutAnchorPose(
+                bay,
+                held,
+                bay.positionsOnTrolley[start]);
             if (applyFirstServerClearance)
             {
+                _pendingFirstServerClearance = true;
                 bay.positionsOnTrolley[start].position +=
                     bay.transform.TransformVector(new Vector3(0f, 0.005f, 0f));
                 ModSettings.Debug(
@@ -217,12 +224,61 @@ internal static class DynamicTargetAllocator
         ClearPendingRack();
     }
 
+    internal static void CancelPendingPlacement(
+        TrolleyLoadingBay bay,
+        string reason)
+    {
+        var cancelled = false;
+        cancelled |= ModuleTrayLayout.CancelPendingPlacement(bay);
+        cancelled |= PatchPanelLayerLayout.CancelPendingPlacement(bay);
+        cancelled |= CableWheelLayout.CancelPendingPlacement(bay);
+        cancelled |= BoxLayerLayout.CancelPendingPlacement(bay);
+
+        if (_pendingRackStack >= 0)
+        {
+            if (_pendingRackItem is not null)
+            {
+                PatchPanelLayerLayout.ShiftPanelsVertically(
+                    bay,
+                    _pendingRackStack,
+                    -_pendingRackSize);
+                TrolleyContext.Unregister(_pendingRackItem);
+            }
+            ClearPendingRack();
+            BoxLayerLayout.RebuildLayerReservations(bay);
+            cancelled = true;
+        }
+
+        if (cancelled)
+            ModSettings.Debug(
+                $"Cancelled pending trolley placement state ({reason}).");
+    }
+
     private static void ClearPendingRack()
     {
         _pendingRackStack = -1;
         _pendingRackSize = 0;
         _pendingRackStart = -1;
         _pendingRackItem = null;
+        _pendingFirstServerClearance = false;
+    }
+
+    internal static bool TryGetPendingEquipmentPose(
+        UsableObject item,
+        out int slot,
+        out float extraLocalY)
+    {
+        slot = -1;
+        extraLocalY = 0f;
+        if (item is null ||
+            _pendingRackItem is null ||
+            item.Pointer != _pendingRackItem.Pointer ||
+            _pendingRackStart < 0)
+            return false;
+
+        slot = _pendingRackStart;
+        extraLocalY = _pendingFirstServerClearance ? 0.005f : 0f;
+        return true;
     }
 
     private static void BlockEarlierStacksForNativeScan(
@@ -264,83 +320,6 @@ internal static class DynamicTargetAllocator
             if (used[i] != 0)
                 return false;
         return true;
-    }
-
-    internal static void SetTargetRotation(
-        TrolleyLoadingBay bay,
-        Transform target,
-        UsableObject item)
-    {
-        if (bay is null || target is null || item is null)
-            return;
-
-        if (ModuleTrayLayout.TryGetTray(item, out _))
-        {
-            var accessorySlot = -1;
-            for (var i = 0; i < bay.positionsOnTrolley.Length; i++)
-            {
-                if (bay.positionsOnTrolley[i] is not null &&
-                    bay.positionsOnTrolley[i].Pointer == target.Pointer)
-                {
-                    accessorySlot = i;
-                    break;
-                }
-            }
-            ModuleTrayLayout.ApplyTargetPose(bay, target, accessorySlot);
-            return;
-        }
-
-        if (PatchPanelLayerLayout.IsPatchPanel(item))
-        {
-            PatchPanelLayerLayout.ApplyPose(bay, target, item);
-            return;
-        }
-
-        if (CableWheelLayout.IsCableWheel(item))
-        {
-            var cableSlot = -1;
-            for (var i = 0; i < bay.positionsOnTrolley.Length; i++)
-            {
-                if (bay.positionsOnTrolley[i] is not null &&
-                    bay.positionsOnTrolley[i].Pointer == target.Pointer)
-                {
-                    cableSlot = i;
-                    break;
-                }
-            }
-            CableWheelLayout.ApplyTargetPose(
-                bay,
-                target,
-                cableSlot);
-            return;
-        }
-
-        var boxedRack = BoxLayerLayout.IsBox(item);
-        if (boxedRack)
-        {
-            BoxLayerLayout.ApplyPose(bay, target, item);
-            return;
-        }
-        var targetIndex = -1;
-        for (var i = 0; i < bay.positionsOnTrolley.Length; i++)
-        {
-            if (bay.positionsOnTrolley[i] is not null &&
-                bay.positionsOnTrolley[i].Pointer == target.Pointer)
-            {
-                targetIndex = i;
-                break;
-            }
-        }
-
-        if (targetIndex >= 0)
-        {
-            ApplyServerTargetPose(bay, target, item, targetIndex, true);
-            return;
-        }
-
-        var localRotation = Quaternion.Euler(
-            0f, CartLayout.GetServerYaw(0), 0f);
-        target.rotation = bay.transform.rotation * localRotation;
     }
 
     internal static void ApplyServerTargetPose(

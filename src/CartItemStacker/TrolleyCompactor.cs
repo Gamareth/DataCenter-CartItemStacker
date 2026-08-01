@@ -26,6 +26,7 @@ internal static class TrolleyCompactor
     private static readonly Dictionary<System.IntPtr, GameObject> ItemAnchors = new();
     private static readonly List<ColliderState> CompactionColliders = new();
     private static readonly List<UsableObject> CompactionItems = new();
+    private static int _movementToken;
     private static int _restoreToken;
 
     internal static void ResetAnchors()
@@ -83,7 +84,8 @@ internal static class TrolleyCompactor
     internal static void RestoreCompactionColliders()
     {
         _restoreToken++;
-        RestoreCompactionCollidersNow();
+        _movementToken++;
+        RestoreCompactionCollidersNow("interrupted by a newer cart operation");
     }
 
     internal static void ScheduleCompactionColliderRestore()
@@ -103,20 +105,21 @@ internal static class TrolleyCompactor
             yield break;
 
         _restoreToken++;
-        RestoreCompactionCollidersNow();
+        _movementToken++;
+        RestoreCompactionCollidersNow("animation completed");
     }
 
-    private static void RestoreCompactionCollidersNow()
+    private static void RestoreCompactionCollidersNow(string reason)
     {
         if (CompactionColliders.Count == 0 && CompactionItems.Count == 0)
             return;
 
-        // Direct MoveToStorage calls animate to the supplied transform but do
-        // not run TrolleyLoadingBay's delayed parenting coroutine. Bind every
-        // moved item to its private bay-owned anchor once the animation ends,
-        // otherwise the cart can drive away and leave that compacted block in
-        // world space.
+        // Commit every compacted item to its authoritative absolute target
+        // before restoring collisions. This also makes interruption safe: a
+        // newer cart operation completes the previous move first instead of
+        // preserving an arbitrary in-flight world pose.
         var parented = 0;
+        var normalizedBodies = 0;
         foreach (var item in CompactionItems)
         {
             if (item is null || item.transform is null ||
@@ -124,7 +127,25 @@ internal static class TrolleyCompactor
                 anchor is null || anchor.transform is null)
                 continue;
 
+            var positionError = Vector3.Distance(
+                item.transform.position, anchor.transform.position);
+            var rotationError = Quaternion.Angle(
+                item.transform.rotation, anchor.transform.rotation);
+            StoredCargoMotion.SnapAbsolute(
+                item, anchor.transform.position, anchor.transform.rotation);
             item.transform.SetParent(anchor.transform, true);
+            item.transform.localPosition = Vector3.zero;
+            item.transform.localRotation = Quaternion.identity;
+            item.storedPosition = item.trolleySlotIndex;
+            item.isOnTrolley = true;
+            if (StoredCargoPhysics.EnsureOwnKinematicBody(
+                    item, "compaction collider restore"))
+                normalizedBodies++;
+            ModSettings.Debug(
+                $"Converged compacted '{item.name}' at slot " +
+                $"{item.trolleySlotIndex}: corrected " +
+                $"{positionError:0.0000}m and {rotationError:0.00}deg " +
+                $"({reason}).");
             parented++;
         }
 
@@ -145,8 +166,9 @@ internal static class TrolleyCompactor
         }
         CompactionItems.Clear();
         ModSettings.Debug(
-            $"Bound {parented} compacted item(s) to the trolley and restored " +
-            $"{restored} collider(s).");
+            $"Converged and bound {parented} compacted item(s) to the trolley and restored " +
+            $"{restored} collider(s); normalized {normalizedBodies} " +
+            "item-owned kinematic Rigidbody state(s).");
     }
 
     internal static void MoveUpperItemsBeforeExtraction(
@@ -191,6 +213,7 @@ internal static class TrolleyCompactor
 
         // Move the highest item first, then work downward toward the extraction.
         moving.Sort((a, b) => b.trolleySlotIndex.CompareTo(a.trolleySlotIndex));
+        var movementToken = ++_movementToken;
 
         foreach (var item in moving)
         {
@@ -198,13 +221,12 @@ internal static class TrolleyCompactor
             if (newSlot < stackStart || newSlot >= targets.Length)
                 continue;
 
-            // The native slot target at newSlot is still occupied by the item
-            // that will only be extracted after this prefix. Use a private
-            // per-item copy of the exact destination-slot pose. Supplying the
-            // item's current world position as a target is incorrect because
-            // native MoveToStorage applies its pivot/storage offset again; on
-            // the 270-degree stack that shifted the whole compacted block into
-            // the neighbouring stack.
+            // The destination slot is still occupied until the original click
+            // extracts the lower item. Use a private bay-owned copy of the
+            // authoritative destination pose and animate directly to it. The
+            // item is already stored, so invoking native MoveToStorage again
+            // would add a second independent tween and a second interpretation
+            // of the same storage target.
             var anchorObject = new GameObject(
                 $"CartStackerCompactionAnchor_{item.Pointer.ToInt64():X}_{newSlot}");
             anchorObject.transform.SetParent(bay.transform, false);
@@ -216,10 +238,13 @@ internal static class TrolleyCompactor
             // moving colliders for this synchronous window prevents Unity from
             // resolving that intentional overlap through the trolley body.
             SuppressCompactionColliders(item);
+            if (!StoredCargoPhysics.EnsureOwnKinematicBody(
+                    item, "pre-extraction compaction"))
+                continue;
 
             // If this item was compacted before, detach it from the old private
             // anchor while preserving world pose so that anchor can be cleaned
-            // up after the next MoveToStorage call.
+            // up before the next deterministic move.
             if (ItemAnchors.TryGetValue(item.Pointer, out var previousAnchor) &&
                 previousAnchor is not null)
             {
@@ -227,14 +252,24 @@ internal static class TrolleyCompactor
                 DestroyIfEmpty(previousAnchor);
             }
 
-            item.MoveToStorage(anchorObject.transform, newSlot, item.storageUID);
             item.trolleySlotIndex = newSlot;
+            item.storedPosition = newSlot;
+            item.isOnTrolley = true;
 
             ItemAnchors[item.Pointer] = anchorObject;
+            MelonCoroutines.Start(StoredCargoMotion.AnimateAbsolute(
+                item,
+                anchorObject.transform.position,
+                anchorObject.transform.rotation,
+                ModSettings.GetAnimationDuration(ColliderRestoreDelay),
+                StoredCargoMotion.PositionEasing.SmoothStep,
+                StoredCargoMotion.RotationMotion.Interpolate,
+                () => movementToken == _movementToken));
 
             ModSettings.Debug(
                 $"Compacted '{item.name}' from slot {newSlot + removedSize} " +
-                $"to {newSlot} through an isolated anchor (-{removedSize}U).");
+                $"to {newSlot} through deterministic absolute-pose movement " +
+                $"(-{removedSize}U).");
         }
 
         ModSettings.Debug(

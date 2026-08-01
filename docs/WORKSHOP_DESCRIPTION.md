@@ -10,6 +10,7 @@ The result is the kind of capacity a real-world data center technician might squ
 
 - Servers, switches, firewalls, boxed racks, and patch panels neatly arranged across two vertical equipment stacks of up to 42U each.
 - Dedicated storage for SFP module trays, without modifying the trolley model.
+- Native manual SFP insertion into the specific tray you choose.
 - Two dedicated stacks for cable spools.
 - Automatic sorting and smooth compaction when items are removed.
 - Configurable equipment and cable-spool capacity.

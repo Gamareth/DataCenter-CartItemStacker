@@ -32,10 +32,19 @@ Check("42U is a valid equipment limit",
     CapacityRules.IsValidEquipmentLimit(42));
 Check("23U is rejected",
     !CapacityRules.IsValidEquipmentLimit(23));
-
+Check("Patch panels stay in place within the same row",
+    !LayerCompactionRules.IsFromHigherRow(6, 0, 7));
+Check("Patch panel from the next row may fill a lower-row gap",
+    LayerCompactionRules.IsFromHigherRow(7, 0, 7));
+Check("Patch panel does not compact sideways in the second row",
+    !LayerCompactionRules.IsFromHigherRow(13, 7, 7));
+Check("Boxes use the same higher-row-only rule",
+    LayerCompactionRules.IsFromHigherRow(3, 1, 3));
+Check("Invalid layer compaction input is rejected",
+    !LayerCompactionRules.IsFromHigherRow(7, 0, 0));
 if (failures.Count == 0)
 {
-    Console.WriteLine("All Cart Item Stacker capacity tests passed.");
+    Console.WriteLine("All Cart Item Stacker logic tests passed.");
     return 0;
 }
 

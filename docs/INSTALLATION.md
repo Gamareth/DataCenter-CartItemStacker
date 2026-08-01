@@ -21,7 +21,7 @@
 5. Confirm that the MelonLoader console contains:
 
    ```text
-   Cart Item Stacker 0.9.0-rc.1 initialized
+   Cart Item Stacker 1.0.0 initialized
    ```
 
 ## Install from Steam Workshop

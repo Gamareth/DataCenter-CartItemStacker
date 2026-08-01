@@ -45,6 +45,17 @@ internal static class TrolleyContext
         Items.RemoveAll(existing => existing is null || existing.Pointer == item.Pointer);
     }
 
+    internal static bool IsRegistered(UsableObject item)
+    {
+        if (item is null)
+            return false;
+
+        foreach (var existing in Items)
+            if (existing is not null && existing.Pointer == item.Pointer)
+                return true;
+        return false;
+    }
+
     internal static bool HasCargo()
     {
         for (var index = Items.Count - 1; index >= 0; index--)
@@ -306,6 +317,23 @@ internal static class TrolleyNativeColliderEnablePatch
             var item = __instance.uo;
             if (item is null || item.objectInHands || !item.isOnTrolley)
                 return;
+
+            if (TrolleyTargetPatch.ReassertStagedLoadSuppression(item))
+            {
+                ModSettings.Debug(
+                    $"Native collider-enable hook kept staged load item " +
+                    $"'{item.name}' suppressed until reconstruction completes.");
+                return;
+            }
+
+            if (IncomingEquipmentIsolation.IsSuppressed(item))
+            {
+                // Native code has just re-enabled the root collider. Keep all
+                // equipment colliders disabled until the finalizer has removed
+                // the restored Rigidbody at the settled target pose.
+                IncomingEquipmentIsolation.Reassert(item);
+                return;
+            }
 
             var rootCollider = item.GetComponent<Collider>();
             if (rootCollider is null || !rootCollider.enabled)

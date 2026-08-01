@@ -9,18 +9,6 @@ namespace CartItemStacker;
 
 internal static class ModuleTrayLayout
 {
-    private readonly struct TrayPose
-    {
-        internal readonly Vector3 Position;
-        internal readonly Quaternion Rotation;
-
-        internal TrayPose(Vector3 position, Quaternion rotation)
-        {
-            Position = position;
-            Rotation = rotation;
-        }
-    }
-
     private enum TrayZone
     {
         Invalid,
@@ -66,6 +54,12 @@ internal static class ModuleTrayLayout
     private const float ActiveDistanceFromHandle = -0.065f;
     private const float OverflowDistanceFromHandle = -0.065f;
     private const float EmptyDistanceFromHandle = -0.005f;
+    // Data Center maps ObjectInHand.SFPBox to native trolley profile index 1.
+    // Use that same position and Euler-rotation profile when converting a
+    // visible layout anchor into the tray prefab's definitive root pose.
+    private const int NativeSfpBoxProfileIndex = 1;
+    private static readonly Vector3 FallbackNativeRootPositionOffset =
+        new(0f, -0.300f, 0f);
     private static float _handleX;
     private static float _handleZ = -0.677f;
     private static SFPBox _pendingTray;
@@ -98,10 +92,34 @@ internal static class ModuleTrayLayout
     internal static bool IsTray(UsableObject item) =>
         TryGetTray(item, out _);
 
+    internal static bool TryGetPendingSlot(
+        UsableObject item,
+        out int slot)
+    {
+        slot = -1;
+        if (item is null ||
+            _pendingTray is null ||
+            item.Pointer != _pendingTray.Pointer ||
+            !IsAccessorySlot(_pendingSlot))
+            return false;
+
+        slot = _pendingSlot;
+        return true;
+    }
+
     private static bool TryGetModule(
         UsableObject item,
         out SFPModule module)
     {
+        // A filled SFPBox contains SFPModule child components. Classify the
+        // complete tray first so its contents can never make the held tray
+        // masquerade as a loose module.
+        if (TryGetTray(item, out _))
+        {
+            module = null;
+            return false;
+        }
+
         module = item as SFPModule;
         if (module is not null)
             return true;
@@ -121,97 +139,8 @@ internal static class ModuleTrayLayout
         return module is not null && module.Pointer != System.IntPtr.Zero;
     }
 
-    internal static bool IsNativeModuleReturn(
-        UsableObject held,
-        UsableObject target)
-    {
-        if (!TryGetModule(held, out var module) ||
-            !TryGetTray(target, out var tray))
-            return false;
-
-        try
-        {
-            return tray.CanAcceptSFP(module.sfpType);
-        }
-        catch (System.Exception exception)
-        {
-            Melon<CartItemStacker.Mod>.Logger.Warning(
-                $"Could not evaluate native SFP return: {exception.Message}");
-            return false;
-        }
-    }
-
-    internal static bool IsModuleTrayInteraction(
-        UsableObject held,
-        UsableObject target) =>
-        TryGetModule(held, out _) && TryGetTray(target, out _);
-
-    internal static bool TryRouteModuleToEmptyTray(
-        UsableObject held,
-        UsableObject clickedTarget,
-        out SFPBox destination)
-    {
-        destination = null;
-        if (!TryGetModule(held, out var module) ||
-            !TryGetTray(clickedTarget, out var clickedTray))
-            return false;
-
-        // Only provide overflow routing when the clicked tray itself cannot
-        // accept the module. A compatible non-full tray keeps native behavior.
-        try
-        {
-            if (clickedTray.CanAcceptSFP(module.sfpType))
-                return false;
-        }
-        catch (System.Exception)
-        {
-            return false;
-        }
-
-        foreach (var item in TrolleyContext.Items)
-        {
-            if (item is not SFPBox candidate ||
-                candidate.objectInHands ||
-                !candidate.isOnTrolley ||
-                CountModules(candidate) != 0)
-                continue;
-
-            var type = NormalizeType(candidate);
-            if (type < 0 || !CanAddFilledTray(type, candidate))
-                continue;
-
-            bool accepts;
-            try
-            {
-                accepts = candidate.CanAcceptSFP(module.sfpType);
-            }
-            catch (System.Exception)
-            {
-                continue;
-            }
-            if (!accepts)
-                continue;
-
-            BeforeModuleChange(candidate);
-            try
-            {
-                if (!candidate.ReturnSFPDirectly(module))
-                    continue;
-            }
-            catch (System.Exception exception)
-            {
-                Melon<CartItemStacker.Mod>.Logger.Warning(
-                    $"Empty-tray overflow return failed: {exception.Message}");
-                continue;
-            }
-
-            destination = candidate;
-            ScheduleArrange(candidate, "full tray overflow");
-            return true;
-        }
-
-        return false;
-    }
+    internal static bool IsModule(UsableObject item) =>
+        TryGetModule(item, out _);
 
     internal static bool IsAccessorySlot(int slot) =>
         slot >= ActiveStart && slot < CartLayout.CableStart;
@@ -242,6 +171,114 @@ internal static class ModuleTrayLayout
             $"({_handleX:0.000}, {_handleZ:0.000}); four active slots, " +
             $"{CartLayout.FilledOverflowTraySlots} shared filled-overflow slots " +
             $"and {CartLayout.EmptyModuleTraySlots} separate empty slots.");
+    }
+
+    internal static void RehydrateLoaded(
+        TrolleyLoadingBay bay,
+        IEnumerable<UsableObject> loadedItems)
+    {
+        if (bay?.transform is null || loadedItems is null)
+            return;
+
+        var filledByType = new[]
+        {
+            new List<SFPBox>(),
+            new List<SFPBox>(),
+            new List<SFPBox>(),
+            new List<SFPBox>(),
+        };
+        var empty = new List<SFPBox>();
+        foreach (var item in loadedItems)
+        {
+            if (!TryGetTray(item, out var tray) || tray?.transform is null)
+                continue;
+
+            var type = NormalizeType(tray);
+            if (type < 0)
+                continue;
+            if (CountModules(tray) == 0)
+                empty.Add(tray);
+            else
+                filledByType[type].Add(tray);
+        }
+
+        var overflow = new List<SFPBox>();
+        for (var type = 0; type < filledByType.Length; type++)
+        {
+            var selectedType = type;
+            filledByType[type].Sort((left, right) =>
+                DistanceToActivePose(bay, left, selectedType).CompareTo(
+                    DistanceToActivePose(bay, right, selectedType)));
+            if (filledByType[type].Count == 0)
+                continue;
+
+            AssignLoadedSlot(
+                bay,
+                filledByType[type][0],
+                ActiveStart + type);
+            for (var index = 1; index < filledByType[type].Count; index++)
+                overflow.Add(filledByType[type][index]);
+        }
+
+        SortBySavedRowPosition(bay, overflow);
+        for (var index = 0;
+            index < overflow.Count &&
+            index < CartLayout.FilledOverflowTraySlots;
+            index++)
+        {
+            AssignLoadedSlot(bay, overflow[index], OverflowStart + index);
+        }
+
+        SortBySavedRowPosition(bay, empty);
+        for (var index = 0;
+            index < empty.Count &&
+            index < CartLayout.EmptyModuleTraySlots;
+            index++)
+        {
+            AssignLoadedSlot(bay, empty[index], EmptyStart + index);
+        }
+    }
+
+    private static float DistanceToActivePose(
+        TrolleyLoadingBay bay,
+        SFPBox tray,
+        int type)
+    {
+        var local = bay.transform.InverseTransformPoint(
+            tray.transform.position);
+        var centeredType =
+            type - (CartLayout.ModuleTypeCount - 1) * 0.5f;
+        var expected = new Vector3(
+            _handleX + centeredType * TypeSpacingX,
+            ActiveTrayY + GetNativeRootPositionOffset(bay).y,
+            _handleZ + ActiveDistanceFromHandle);
+        return (local - expected).sqrMagnitude;
+    }
+
+    private static void SortBySavedRowPosition(
+        TrolleyLoadingBay bay,
+        List<SFPBox> trays)
+    {
+        trays.Sort((left, right) =>
+        {
+            var leftLocal = bay.transform.InverseTransformPoint(
+                left.transform.position);
+            var rightLocal = bay.transform.InverseTransformPoint(
+                right.transform.position);
+            return leftLocal.x.CompareTo(rightLocal.x);
+        });
+    }
+
+    private static void AssignLoadedSlot(
+        TrolleyLoadingBay bay,
+        SFPBox tray,
+        int slot)
+    {
+        tray.sizeInU = 1;
+        tray.trolleySlotIndex = slot;
+        tray.storedPosition = slot;
+        tray.isOnTrolley = true;
+        tray.transform.SetParent(bay.transform, true);
     }
 
     internal static int CountModules(SFPBox tray)
@@ -344,7 +381,6 @@ internal static class ModuleTrayLayout
             tray.trolleySlotIndex = slot;
             tray.storedPosition = slot;
             tray.isOnTrolley = true;
-            FixAllModuleOrientations(tray);
             ScheduleArrangeAfterPlacement(tray, "tray placement");
         }
         else
@@ -360,6 +396,20 @@ internal static class ModuleTrayLayout
                 ? $"Module tray placement completed in slot {slot}."
                 : "Module tray placement failed; accessory reservations restored.");
         ClearPending();
+    }
+
+    internal static bool CancelPendingPlacement(TrolleyLoadingBay bay)
+    {
+        if (_pendingTray is null)
+            return false;
+
+        var tray = _pendingTray;
+        TrolleyContext.Unregister(tray);
+        BoxLayerLayout.RebuildLayerReservations(bay);
+        TrolleyPhysicsIsolation.RestoreItem(tray);
+        RefreshAccessoryCollisions();
+        ClearPending();
+        return true;
     }
 
     private static void ClearPending()
@@ -452,8 +502,58 @@ internal static class ModuleTrayLayout
         Transform target,
         int slot)
     {
-        if (bay?.transform is null || target is null || !IsAccessorySlot(slot))
+        if (target is null ||
+            !TryResolvePose(
+                bay,
+                slot,
+                rootAdjusted: false,
+                out var position,
+                out var rotation))
             return;
+
+        target.SetPositionAndRotation(position, rotation);
+    }
+
+    internal static bool TryResolveRootPose(
+        TrolleyLoadingBay bay,
+        int slot,
+        out Vector3 position,
+        out Quaternion rotation) =>
+        TryResolvePose(
+            bay,
+            slot,
+            rootAdjusted: true,
+            out position,
+            out rotation);
+
+    internal static bool ApplyResolvedRootPose(
+        TrolleyLoadingBay bay,
+        Transform target,
+        int slot)
+    {
+        if (target is null ||
+            !TryResolveRootPose(
+                bay,
+                slot,
+                out var position,
+                out var rotation))
+            return false;
+
+        target.SetPositionAndRotation(position, rotation);
+        return true;
+    }
+
+    private static bool TryResolvePose(
+        TrolleyLoadingBay bay,
+        int slot,
+        bool rootAdjusted,
+        out Vector3 position,
+        out Quaternion rotation)
+    {
+        position = Vector3.zero;
+        rotation = Quaternion.identity;
+        if (bay?.transform is null || !IsAccessorySlot(slot))
+            return false;
 
         var zone = GetZone(slot);
         Vector3 localPosition;
@@ -493,9 +593,36 @@ internal static class ModuleTrayLayout
             localRotation = Quaternion.Euler(180f, 180f, 0f) *
                 Quaternion.Euler(0f, 0f, 90f);
         }
-        target.SetPositionAndRotation(
-            bay.transform.TransformPoint(localPosition),
-            bay.transform.rotation * localRotation);
+        if (rootAdjusted)
+        {
+            localPosition += GetNativeRootPositionOffset(bay);
+            localRotation = Quaternion.Euler(
+                localRotation.eulerAngles +
+                GetNativeRootEulerOffset(bay));
+        }
+        position = bay.transform.TransformPoint(localPosition);
+        rotation = bay.transform.rotation * localRotation;
+        return true;
+    }
+
+    private static Vector3 GetNativeRootPositionOffset(
+        TrolleyLoadingBay bay)
+    {
+        var offsets = bay?.additionalPositions;
+        return offsets is not null &&
+            offsets.Length > NativeSfpBoxProfileIndex
+            ? offsets[NativeSfpBoxProfileIndex]
+            : FallbackNativeRootPositionOffset;
+    }
+
+    private static Vector3 GetNativeRootEulerOffset(
+        TrolleyLoadingBay bay)
+    {
+        var offsets = bay?.additionalRotations;
+        return offsets is not null &&
+            offsets.Length > NativeSfpBoxProfileIndex
+            ? offsets[NativeSfpBoxProfileIndex]
+            : Vector3.zero;
     }
 
     internal static void Arrange(TrolleyLoadingBay bay, string reason)
@@ -504,7 +631,6 @@ internal static class ModuleTrayLayout
             return;
 
         var movementToken = ++_movementToken;
-        var provenPoses = CaptureProvenPoses();
         var overflow = new List<SFPBox>();
         for (var type = 0; type < CartLayout.ModuleTypeCount; type++)
         {
@@ -519,8 +645,7 @@ internal static class ModuleTrayLayout
                     ActiveStart + type,
                     1,
                     reason,
-                    movementToken,
-                    provenPoses);
+                    movementToken);
                 for (var i = 1; i < filled.Count; i++)
                     overflow.Add(filled[i]);
             }
@@ -534,8 +659,7 @@ internal static class ModuleTrayLayout
             OverflowStart,
             CartLayout.FilledOverflowTraySlots,
             reason,
-            movementToken,
-            provenPoses);
+            movementToken);
 
         var empty = CollectAll(true);
         empty.Sort((left, right) =>
@@ -552,8 +676,7 @@ internal static class ModuleTrayLayout
             EmptyStart,
             CartLayout.EmptyModuleTraySlots,
             reason,
-            movementToken,
-            provenPoses);
+            movementToken);
 
         BoxLayerLayout.RebuildLayerReservations(bay);
         RefreshAccessoryCollisions();
@@ -583,9 +706,14 @@ internal static class ModuleTrayLayout
 
             var actual =
                 bay.transform.InverseTransformPoint(tray.transform.position);
+            if (!TryResolveRootPose(
+                bay,
+                slot,
+                out var expectedPosition,
+                out _))
+                continue;
             var expected =
-                bay.transform.InverseTransformPoint(
-                    bay.positionsOnTrolley[slot].position);
+                bay.transform.InverseTransformPoint(expectedPosition);
             ModSettings.Debug(
                 $"Tray pose after {reason}: m{NormalizeType(tray) + 1}, " +
                 $"slot {slot}, actual ({actual.x:0.000}, {actual.y:0.000}, " +
@@ -653,18 +781,6 @@ internal static class ModuleTrayLayout
         return TrayZone.Invalid;
     }
 
-    private static int CurrentOrdinal(SFPBox tray, TrayZone zone)
-    {
-        var slot = tray?.trolleySlotIndex ?? -1;
-        if (GetZone(slot) != zone)
-            return int.MaxValue;
-        return slot - (zone == TrayZone.Active
-            ? ActiveStart
-            : zone == TrayZone.Overflow
-                ? OverflowStart
-                : EmptyStart);
-    }
-
     private static void PlaceList(
         TrolleyLoadingBay bay,
         List<SFPBox> trays,
@@ -672,200 +788,53 @@ internal static class ModuleTrayLayout
         int start,
         int capacity,
         string reason,
-        int movementToken,
-        Dictionary<int, TrayPose> provenPoses)
+        int movementToken)
     {
         var count = System.Math.Min(trays.Count, capacity);
         for (var ordinal = 0; ordinal < count; ordinal++)
         {
             var tray = trays[ordinal];
             var slot = start + ordinal;
-            var target = bay.positionsOnTrolley[slot];
-            var currentOrdinal = CurrentOrdinal(tray, zone);
             // Accessory targets are configured once during trolley startup and
             // again only for a genuinely free native-placement slot. Stored
             // trays can remain parented to their original target. Mutating a
             // target here would therefore drag its current child while another
             // tray is being animated into that same slot.
-            FixAllModuleOrientations(tray);
             if (tray.trolleySlotIndex == slot)
                 continue;
 
-            if (!TryGetProvenPose(
+            if (!TryResolveRootPose(
                 bay,
-                provenPoses,
-                zone,
                 slot,
                 out var targetPosition,
                 out var targetRotation))
             {
-                targetPosition = target.position;
-                targetRotation = target.rotation;
                 Melon<CartItemStacker.Mod>.Logger.Warning(
-                    $"No proven {zone} pose available for tray slot {slot}; " +
-                    "using the configured target as fallback.");
+                    $"Could not resolve the {zone} root pose for tray slot " +
+                    $"{slot}; reorder skipped.");
+                continue;
             }
 
             tray.sizeInU = 1;
             tray.transform.SetParent(bay.transform, true);
             tray.trolleySlotIndex = slot;
             tray.storedPosition = slot;
-            MelonCoroutines.Start(MoveTrayWorldPose(
+            MelonCoroutines.Start(StoredCargoMotion.AnimateAbsolute(
                 tray,
                 targetPosition,
                 targetRotation,
-                movementToken));
+                ModSettings.GetAnimationDuration(TrayMoveDuration),
+                StoredCargoMotion.PositionEasing.Linear,
+                StoredCargoMotion.RotationMotion.Interpolate,
+                () => movementToken == _movementToken));
             tray.isOnTrolley = true;
             TrolleyPhysicsIsolation.IgnoreStoredItem(tray);
             ModSettings.Debug(
                 $"Reordered m{NormalizeType(tray) + 1} tray to " +
                 $"{zone.ToString().ToLowerInvariant()} slot {slot} " +
-                "using an occupied destination-zone pose " +
+                "using the shared resolved root pose " +
                 $"({reason}).");
         }
-    }
-
-    private static bool TryGetProvenPose(
-        TrolleyLoadingBay bay,
-        Dictionary<int, TrayPose> provenPoses,
-        TrayZone zone,
-        int desiredSlot,
-        out Vector3 position,
-        out Quaternion rotation)
-    {
-        position = Vector3.zero;
-        rotation = Quaternion.identity;
-        if (bay?.transform is null)
-            return false;
-
-        // During a reorder the destination is commonly still occupied by the
-        // tray that will move next. Its root pose includes Data Center's
-        // prefab-specific storage offset and is therefore the best template.
-        if (provenPoses is not null &&
-            provenPoses.TryGetValue(desiredSlot, out var exactPose))
-        {
-            position = exactPose.Position;
-            rotation = exactPose.Rotation;
-            return true;
-        }
-
-        // After extraction the exact destination can be empty. Extrapolate
-        // from another proven pose in the same zone along the cart-local row.
-        if (provenPoses is null)
-            return false;
-        foreach (var pair in provenPoses)
-        {
-            if (GetZone(pair.Key) != zone)
-                continue;
-
-            var slotDelta = desiredSlot - pair.Key;
-            var spacing = zone == TrayZone.Active
-                ? TypeSpacingX
-                : zone == TrayZone.Empty
-                    ? EmptyTraySpacing
-                    : OverflowTraySpacing;
-            position = pair.Value.Position +
-                bay.transform.TransformVector(new Vector3(
-                    slotDelta * spacing,
-                    0f,
-                    0f));
-            rotation = pair.Value.Rotation;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static Dictionary<int, TrayPose> CaptureProvenPoses()
-    {
-        var result = new Dictionary<int, TrayPose>();
-        foreach (var item in TrolleyContext.Items)
-        {
-            if (item is not SFPBox tray ||
-                tray.objectInHands ||
-                !tray.isOnTrolley ||
-                tray.transform is null ||
-                GetZone(tray.trolleySlotIndex) == TrayZone.Invalid)
-                continue;
-
-            result[tray.trolleySlotIndex] = new TrayPose(
-                tray.transform.position,
-                tray.transform.rotation);
-        }
-        return result;
-    }
-
-    private static IEnumerator MoveTrayWorldPosition(
-        SFPBox tray,
-        Vector3 targetPosition,
-        Quaternion fixedRotation,
-        int movementToken)
-    {
-        if (tray?.transform is null)
-            yield break;
-
-        var startPosition = tray.transform.position;
-        var elapsed = 0f;
-        var duration = ModSettings.GetAnimationDuration(TrayMoveDuration);
-        while (elapsed < duration)
-        {
-            yield return null;
-            if (movementToken != _movementToken ||
-                tray is null ||
-                tray.objectInHands ||
-                tray.transform is null)
-                yield break;
-
-            elapsed += Time.deltaTime;
-            var progress = Mathf.Clamp01(elapsed / duration);
-            tray.transform.SetPositionAndRotation(
-                Vector3.Lerp(startPosition, targetPosition, progress),
-                fixedRotation);
-        }
-
-        if (movementToken == _movementToken &&
-            tray is not null &&
-            !tray.objectInHands &&
-            tray.transform is not null)
-            tray.transform.SetPositionAndRotation(
-                targetPosition, fixedRotation);
-    }
-
-    private static IEnumerator MoveTrayWorldPose(
-        SFPBox tray,
-        Vector3 targetPosition,
-        Quaternion targetRotation,
-        int movementToken)
-    {
-        if (tray?.transform is null)
-            yield break;
-
-        var startPosition = tray.transform.position;
-        var startRotation = tray.transform.rotation;
-        var elapsed = 0f;
-        var duration = ModSettings.GetAnimationDuration(TrayMoveDuration);
-        while (elapsed < duration)
-        {
-            yield return null;
-            if (movementToken != _movementToken ||
-                tray is null ||
-                tray.objectInHands ||
-                tray.transform is null)
-                yield break;
-
-            elapsed += Time.deltaTime;
-            var progress = Mathf.Clamp01(elapsed / duration);
-            tray.transform.SetPositionAndRotation(
-                Vector3.Lerp(startPosition, targetPosition, progress),
-                Quaternion.Slerp(startRotation, targetRotation, progress));
-        }
-
-        if (movementToken == _movementToken &&
-            tray is not null &&
-            !tray.objectInHands &&
-            tray.transform is not null)
-            tray.transform.SetPositionAndRotation(
-                targetPosition, targetRotation);
     }
 
     private static void RefreshAccessoryCollisions()
@@ -981,36 +950,6 @@ internal static class ModuleTrayLayout
         // with neighbouring cargo and nudge the trolley.
     }
 
-    internal static void FixReturnedModuleOrientation(SFPModule module)
-    {
-        if (module?.transform is null)
-            return;
-
-        // The native return method resets this to Quaternion.identity. In this
-        // prefab the module's length/insertion direction is local Z. Rolling
-        // around Z corrects top/bottom without reversing the insertion axis or
-        // moving the connector through the tray around its offset pivot.
-        module.transform.localRotation = Quaternion.Euler(0f, 0f, 180f);
-    }
-
-    private static void FixAllModuleOrientations(SFPBox tray)
-    {
-        if (tray is null)
-            return;
-
-        try
-        {
-            var modules = tray.GetComponentsInChildren<SFPModule>(true);
-            foreach (var module in modules)
-                FixReturnedModuleOrientation(module);
-        }
-        catch (System.Exception exception)
-        {
-            Melon<CartItemStacker.Mod>.Logger.Warning(
-                $"Could not normalize modules already in tray: {exception.Message}");
-        }
-    }
-
     private static IEnumerator ArrangeNextFrame(
         SFPBox tray,
         int token,
@@ -1062,15 +1001,27 @@ internal static class ModuleTrayReturnModulePatch
             ModuleTrayLayout.BeforeModuleChange(__instance);
     }
 
-    private static void Postfix(
-        SFPBox __instance,
-        SFPModule __0,
-        bool __result)
+    private static void Postfix(SFPBox __instance, bool __result)
     {
         if (TrolleyContext.LayoutEnabled && __result)
         {
-            ModuleTrayLayout.FixReturnedModuleOrientation(__0);
             ModuleTrayLayout.ScheduleArrange(__instance, "module returned");
         }
+    }
+}
+
+[HarmonyPatch(typeof(SFPBox), nameof(SFPBox.InteractOnClick))]
+internal static class ModuleTrayNativeInteractionPatch
+{
+    private static void Prefix(SFPBox __instance)
+    {
+        if (TrolleyContext.LayoutEnabled)
+            ModuleTrayLayout.BeforeModuleChange(__instance);
+    }
+
+    private static void Postfix(SFPBox __instance)
+    {
+        if (TrolleyContext.LayoutEnabled)
+            ModuleTrayLayout.ScheduleArrange(__instance, "native tray interaction");
     }
 }

@@ -26,6 +26,13 @@ internal static class BoxLayerLayout
         LayoutConstants.GravityAnimationDuration;
     private const float HandleStackBoxZOffset = -0.075f;
     private const float FrontStackBoxZOffset = -0.045f;
+    // The boxed-rack prefab root does not coincide with its canonical visible
+    // layout anchor. Every storage route resolves this fixed root offset from
+    // the same logical box assignment.
+    private static readonly Vector3 NativeRootTargetOffset =
+        new(0.030f, -0.070f, 0.100f);
+    // Box rows are centered on trolley-local X and advance across local Z.
+    // Keep this axis independent from the world-aligned renderer bounds.
     private static readonly float[] ColumnZ = { -0.17f, 0f, 0.17f };
     private static readonly Dictionary<System.IntPtr, BoxSlot> Slots = new();
     private static UsableObject _pendingBox;
@@ -319,6 +326,27 @@ internal static class BoxLayerLayout
         _pendingPatchShiftU = 0;
     }
 
+    internal static bool CancelPendingPlacement(TrolleyLoadingBay bay)
+    {
+        if (_pendingBox is null)
+            return false;
+
+        var box = _pendingBox;
+        if (_pendingPatchShiftStack >= 0 && _pendingPatchShiftU != 0)
+            PatchPanelLayerLayout.ShiftPanelsVertically(
+                bay,
+                _pendingPatchShiftStack,
+                -_pendingPatchShiftU);
+        ForgetBox(box);
+        box.sizeInU = CartLayout.NativeBoxSizeU;
+        TrolleyContext.Unregister(box);
+        _pendingBox = null;
+        _pendingPatchShiftStack = -1;
+        _pendingPatchShiftU = 0;
+        RebuildLayerReservations(bay);
+        return true;
+    }
+
     internal static void RebuildLayerReservations(TrolleyLoadingBay bay)
     {
         var used = bay?.usedPositions;
@@ -453,23 +481,10 @@ internal static class BoxLayerLayout
     {
         if (bay is null || deltaU == 0)
             return;
-        var delta = bay.transform.TransformVector(new Vector3(0f, deltaU * U, 0f));
-        var movementToken = ++_gravityMovementToken;
-        var moved = 0;
-        foreach (var item in TrolleyContext.Items)
-        {
-            if (!IsBox(item) || item.objectInHands || GetItemStack(item) != stack)
-                continue;
-            MelonCoroutines.Start(AnimateGravityMove(
-                item,
-                item.transform.position + delta,
-                item.transform.rotation,
-                movementToken));
-            moved++;
-        }
-        if (moved > 0)
-            ModSettings.Debug(
-                $"Shifted {moved} box(es) by {deltaU}U on stack {stack + 1}.");
+        AnimateStackToAbsoluteTargets(
+            bay,
+            stack,
+            $"logical equipment height change {deltaU:+#;-#;0}U");
     }
 
     private static bool RangeIsFree(
@@ -494,19 +509,38 @@ internal static class BoxLayerLayout
         {
             var row = assigned.Ordinal / CartLayout.BoxesPerLayer;
             var column = assigned.Ordinal % CartLayout.BoxesPerLayer;
-            var z = GetBoxStackZ(assigned.Stack);
-            var localPosition = new Vector3(
-                0f,
-                BoxDeckY + GetServerHeight(assigned.Stack) * U + row * GetVisualLayerHeight(),
-                z + ColumnZ[column]);
+            var localPosition = GetLayoutAnchorLocal(
+                assigned.Stack,
+                row,
+                column);
             target.SetPositionAndRotation(
                 bay.transform.TransformPoint(localPosition),
-                bay.transform.rotation * Quaternion.Euler(90f, 180f, 0f));
+                GetWorldRotation(bay));
             return;
         }
 
         var ordinal = ExistingBoxCount(box);
         ApplyPoseAtOrdinal(bay, target, box, ordinal);
+    }
+
+    internal static bool ApplyResolvedRootPose(
+        TrolleyLoadingBay bay,
+        Transform target,
+        UsableObject box)
+    {
+        if (bay?.transform is null || target is null || box is null)
+            return false;
+
+        if (!Slots.TryGetValue(box.Pointer, out var assigned))
+            return false;
+
+        var row = assigned.Ordinal / CartLayout.BoxesPerLayer;
+        var column = assigned.Ordinal % CartLayout.BoxesPerLayer;
+        target.SetPositionAndRotation(
+            bay.transform.TransformPoint(
+                GetResolvedRootLocal(assigned.Stack, row, column)),
+            GetWorldRotation(bay));
+        return true;
     }
 
     private static void ApplyPoseAtOrdinal(
@@ -521,16 +555,10 @@ internal static class BoxLayerLayout
         var row = layer / CartLayout.StackCount;
         Slots[box.Pointer] = new BoxSlot(
             stack, row * CartLayout.BoxesPerLayer + column);
-        var serverHeight = GetServerHeight(stack);
-        var visualLayerHeight = GetVisualLayerHeight();
-        var z = GetBoxStackZ(stack);
-        var localPosition = new Vector3(
-            0f,
-            BoxDeckY + serverHeight * U + row * visualLayerHeight,
-            z + ColumnZ[column]);
+        var localPosition = GetLayoutAnchorLocal(stack, row, column);
         target.SetPositionAndRotation(
             bay.transform.TransformPoint(localPosition),
-            bay.transform.rotation * Quaternion.Euler(90f, 180f, 0f));
+            GetWorldRotation(bay));
     }
 
     internal static void CompactStack(TrolleyLoadingBay bay, int stack, int removedOrdinal)
@@ -541,7 +569,6 @@ internal static class BoxLayerLayout
 
         UsableObject candidate = null;
         var candidateOrdinal = -1;
-        var removedRow = removedOrdinal / CartLayout.BoxesPerLayer;
         foreach (var box in TrolleyContext.Items)
         {
             if (!IsBox(box) || box.objectInHands || GetItemStack(box) != stack)
@@ -549,7 +576,10 @@ internal static class BoxLayerLayout
             var ordinal = GetStackOrdinal(box, stack);
             // Pull exactly one box from the highest occupied layer. Picking the
             // highest ordinal also empties that top layer from right to left.
-            if (ordinal / CartLayout.BoxesPerLayer > removedRow &&
+            if (LayerCompactionRules.IsFromHigherRow(
+                    ordinal,
+                    removedOrdinal,
+                    CartLayout.BoxesPerLayer) &&
                 ordinal > candidateOrdinal)
             {
                 candidate = box;
@@ -569,102 +599,117 @@ internal static class BoxLayerLayout
         var slot = stack * CartLayout.SlotsPerStack + GetServerHeight(stack) +
             row * CartLayout.BoxLayerU;
         candidate.sizeInU = 0;
-        ApplyPoseAtStackSlot(
-            bay,
-            candidate,
-            stack,
-            row,
-            column,
-            animate: true);
+        Slots[candidate.Pointer] = new BoxSlot(
+            stack, row * CartLayout.BoxesPerLayer + column);
         candidate.trolleySlotIndex = slot;
+        candidate.storedPosition = slot;
+        AnimateStackToAbsoluteTargets(
+            bay,
+            stack,
+            $"box gravity from ordinal {candidateOrdinal} to {removedOrdinal}");
         ModSettings.Debug(
             $"Local box gravity moved one rack from slot {candidateOrdinal} " +
             $"to gap {removedOrdinal} on stack {stack + 1}.");
     }
 
-    private static void ApplyPoseAtStackSlot(
+    private static int AnimateStackToAbsoluteTargets(
         TrolleyLoadingBay bay,
-        UsableObject box,
+        int stack,
+        string reason)
+    {
+        if (bay?.transform is null || stack < 0 || stack >= CartLayout.StackCount)
+            return 0;
+
+        // A new layout event invalidates every older box animation. Rebuild the
+        // complete affected stack from authoritative logical assignments so an
+        // interrupted relative move can never leave permanent transform drift.
+        var movementToken = ++_gravityMovementToken;
+        var moved = 0;
+        foreach (var box in TrolleyContext.Items)
+        {
+            if (!IsBox(box) || box.objectInHands || box.transform is null ||
+                !Slots.TryGetValue(box.Pointer, out var assigned) ||
+                assigned.Stack != stack)
+                continue;
+
+            var row = assigned.Ordinal / CartLayout.BoxesPerLayer;
+            var column = assigned.Ordinal % CartLayout.BoxesPerLayer;
+            var destination = bay.transform.TransformPoint(
+                GetResolvedRootLocal(stack, row, column));
+            MelonCoroutines.Start(StoredCargoMotion.AnimateAbsolute(
+                box,
+                destination,
+                GetWorldRotation(bay),
+                ModSettings.GetAnimationDuration(GravityMoveDuration),
+                StoredCargoMotion.PositionEasing.SmoothStep,
+                StoredCargoMotion.RotationMotion.Interpolate,
+                () => movementToken == _gravityMovementToken));
+            moved++;
+        }
+
+        if (moved > 0)
+            ModSettings.Debug(
+                $"Reflowing {moved} box(es) on stack {stack + 1} to " +
+                $"absolute slot-derived targets after {reason}.");
+        return moved;
+    }
+
+    internal static int SnapStackToAbsoluteTargets(
+        TrolleyLoadingBay bay,
+        int stack,
+        string reason)
+    {
+        if (bay?.transform is null || stack < 0 || stack >= CartLayout.StackCount)
+            return 0;
+
+        // Cancel any presentation animation before committing the authoritative
+        // end state. Placement finalization calls this only after native motion
+        // has settled.
+        _gravityMovementToken++;
+        var snapped = 0;
+        foreach (var box in TrolleyContext.Items)
+        {
+            if (!IsBox(box) || box.objectInHands || box.transform is null ||
+                !Slots.TryGetValue(box.Pointer, out var assigned) ||
+                assigned.Stack != stack)
+                continue;
+
+            var row = assigned.Ordinal / CartLayout.BoxesPerLayer;
+            var column = assigned.Ordinal % CartLayout.BoxesPerLayer;
+            StoredCargoMotion.SnapAbsolute(
+                box,
+                bay.transform.TransformPoint(
+                    GetResolvedRootLocal(stack, row, column)),
+                GetWorldRotation(bay));
+            snapped++;
+        }
+
+        if (snapped > 0)
+            ModSettings.Debug(
+                $"Snapped {snapped} box(es) on stack {stack + 1} to " +
+                $"absolute slot-derived targets after {reason}.");
+        return snapped;
+    }
+
+    private static Vector3 GetLayoutAnchorLocal(
         int stack,
         int row,
-        int column,
-        bool animate)
-    {
-        var visualHeight = GetVisualLayerHeight();
-        var z = GetBoxStackZ(stack);
-        var newAnchor = new Vector3(0f,
-            BoxDeckY + GetServerHeight(stack) * U + row * visualHeight,
-            z + ColumnZ[column]);
+        int column) =>
+        new(
+            0f,
+            BoxDeckY + GetServerHeight(stack) * U +
+                row * GetVisualLayerHeight(),
+            GetBoxStackZ(stack) + ColumnZ[column]);
 
-        if (Slots.TryGetValue(box.Pointer, out var previous))
-        {
-            var previousRow = previous.Ordinal / CartLayout.BoxesPerLayer;
-            var previousColumn = previous.Ordinal % CartLayout.BoxesPerLayer;
-            var previousZ = GetBoxStackZ(previous.Stack);
-            var oldAnchor = new Vector3(0f,
-                BoxDeckY + GetServerHeight(previous.Stack) * U +
-                    previousRow * visualHeight,
-                previousZ + ColumnZ[previousColumn]);
-            var destination = box.transform.position +
-                bay.transform.TransformVector(newAnchor - oldAnchor);
-            if (animate)
-            {
-                var movementToken = ++_gravityMovementToken;
-                MelonCoroutines.Start(AnimateGravityMove(
-                    box,
-                    destination,
-                    box.transform.rotation,
-                    movementToken));
-            }
-            else
-                box.transform.position = destination;
-        }
-        else
-        {
-            box.transform.SetPositionAndRotation(
-                bay.transform.TransformPoint(newAnchor),
-                bay.transform.rotation * Quaternion.Euler(90f, 180f, 0f));
-        }
-        Slots[box.Pointer] = new BoxSlot(
-            stack, row * CartLayout.BoxesPerLayer + column);
-    }
+    private static Vector3 GetResolvedRootLocal(
+        int stack,
+        int row,
+        int column) =>
+        GetLayoutAnchorLocal(stack, row, column) +
+        NativeRootTargetOffset;
 
-    private static IEnumerator AnimateGravityMove(
-        UsableObject box,
-        Vector3 destination,
-        Quaternion rotation,
-        int movementToken)
-    {
-        if (box?.transform is null)
-            yield break;
-
-        var startPosition = box.transform.position;
-        var startRotation = box.transform.rotation;
-        var elapsed = 0f;
-        var duration = ModSettings.GetAnimationDuration(GravityMoveDuration);
-        while (elapsed < duration)
-        {
-            yield return null;
-            if (movementToken != _gravityMovementToken ||
-                box is null ||
-                box.objectInHands ||
-                box.transform is null)
-                yield break;
-
-            elapsed += Time.deltaTime;
-            var linear = Mathf.Clamp01(elapsed / duration);
-            var eased = linear * linear * (3f - 2f * linear);
-            box.transform.SetPositionAndRotation(
-                Vector3.Lerp(startPosition, destination, eased),
-                Quaternion.Slerp(startRotation, rotation, eased));
-        }
-
-        if (movementToken == _gravityMovementToken &&
-            box is not null &&
-            !box.objectInHands &&
-            box.transform is not null)
-            box.transform.SetPositionAndRotation(destination, rotation);
-    }
+    private static Quaternion GetWorldRotation(TrolleyLoadingBay bay) =>
+        bay.transform.rotation * Quaternion.Euler(90f, 180f, 0f);
 
     private static float GetVisualLayerHeight()
     {

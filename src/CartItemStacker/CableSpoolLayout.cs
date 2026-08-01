@@ -231,6 +231,18 @@ internal static class CableWheelLayout
         _pendingSlot = -1;
     }
 
+    internal static bool CancelPendingPlacement(TrolleyLoadingBay bay)
+    {
+        if (_pendingWheel is null)
+            return false;
+
+        TrolleyContext.Unregister(_pendingWheel);
+        _pendingWheel = null;
+        _pendingSlot = -1;
+        BoxLayerLayout.RebuildLayerReservations(bay);
+        return true;
+    }
+
     internal static void Arrange(TrolleyLoadingBay bay, string reason)
     {
         if (bay?.positionsOnTrolley is null)
@@ -286,11 +298,16 @@ internal static class CableWheelLayout
                         bay.positionsOnTrolley[slot].position -
                         bay.positionsOnTrolley[oldSlot].position;
                     if (animateGravity)
-                        MelonCoroutines.Start(AnimateGravityMove(
+                    {
+                        MelonCoroutines.Start(StoredCargoMotion.AnimateAbsolute(
                             wheel,
                             destination,
                             bay.positionsOnTrolley[slot].rotation,
-                            movementToken));
+                            ModSettings.GetAnimationDuration(GravityMoveDuration),
+                            StoredCargoMotion.PositionEasing.SmoothStep,
+                            StoredCargoMotion.RotationMotion.Interpolate,
+                            () => movementToken == _movementToken));
+                    }
                     else
                         wheel.transform.SetPositionAndRotation(
                             destination,
@@ -312,43 +329,6 @@ internal static class CableWheelLayout
         BoxLayerLayout.RebuildLayerReservations(bay);
         ModSettings.Debug(
             $"Arranged twin cable-wheel stacks after {reason}.");
-    }
-
-    private static IEnumerator AnimateGravityMove(
-        CableSpinner wheel,
-        Vector3 destination,
-        Quaternion rotation,
-        int movementToken)
-    {
-        if (wheel?.transform is null)
-            yield break;
-
-        var startPosition = wheel.transform.position;
-        var startRotation = wheel.transform.rotation;
-        var elapsed = 0f;
-        var duration = ModSettings.GetAnimationDuration(GravityMoveDuration);
-        while (elapsed < duration)
-        {
-            yield return null;
-            if (movementToken != _movementToken ||
-                wheel is null ||
-                wheel.objectInHands ||
-                wheel.transform is null)
-                yield break;
-
-            elapsed += Time.deltaTime;
-            var linear = Mathf.Clamp01(elapsed / duration);
-            var eased = linear * linear * (3f - 2f * linear);
-            wheel.transform.SetPositionAndRotation(
-                Vector3.Lerp(startPosition, destination, eased),
-                Quaternion.Slerp(startRotation, rotation, eased));
-        }
-
-        if (movementToken == _movementToken &&
-            wheel is not null &&
-            !wheel.objectInHands &&
-            wheel.transform is not null)
-            wheel.transform.SetPositionAndRotation(destination, rotation);
     }
 
     internal static void ApplyTargetPose(

@@ -13,6 +13,7 @@ internal static class ModSettings
     internal const float DefaultAnimationSpeed = 1.0f;
     internal const float MinimumAnimationSpeed = 0.5f;
     internal const float MaximumAnimationSpeed = 2.0f;
+    internal const bool DefaultRestackCargoIndicator = true;
     internal const bool DefaultDebugLogging = false;
 
     private const string CategoryIdentifier = "CartItemStacker";
@@ -23,6 +24,7 @@ internal static class ModSettings
     private static MelonPreferences_Entry<int> _equipmentStackMaxUnits;
     private static MelonPreferences_Entry<int> _cableSpoolsPerStack;
     private static MelonPreferences_Entry<float> _animationSpeed;
+    private static MelonPreferences_Entry<bool> _restackCargoIndicator;
     private static MelonPreferences_Entry<bool> _debugLogging;
 
     internal static bool RequestedEnabled =>
@@ -36,6 +38,9 @@ internal static class ModSettings
 
     internal static float AnimationSpeed =>
         _animationSpeed?.Value ?? DefaultAnimationSpeed;
+
+    internal static bool RestackCargoIndicator =>
+        _restackCargoIndicator?.Value ?? DefaultRestackCargoIndicator;
 
     internal static bool DebugLogging =>
         _debugLogging?.Value ?? DefaultDebugLogging;
@@ -70,6 +75,11 @@ internal static class ModSettings
             DefaultAnimationSpeed,
             "Animation speed",
             "Movement animation speed multiplier, from 0.5 through 2.0.");
+        _restackCargoIndicator = _category.CreateEntry(
+            "RestackCargoIndicator",
+            DefaultRestackCargoIndicator,
+            "Restack cargo indicator",
+            "Pulse cargo orange and charcoal only during save-load restacking, then show ready green for one second.");
         _debugLogging = _category.CreateEntry(
             "DebugLogging",
             DefaultDebugLogging,

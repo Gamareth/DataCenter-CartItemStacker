@@ -120,17 +120,20 @@ internal static class CartLayout
 public sealed class Mod : MelonMod
 {
     internal const string DisplayName = "Cart Item Stacker";
-    internal const string Version = "0.9.0-rc.1";
+    internal const string Version = "1.0.0";
     internal const string Author = "Gamareth";
 
     public override void OnInitializeMelon()
     {
         ModSettings.Initialize();
+        NativeSaveLifecycle.Initialize();
         LoggerInstance.Msg(
             $"{DisplayName} {Version} initialized. " +
             $"Requested state: {(ModSettings.RequestedEnabled ? "enabled" : "disabled")}; " +
             $"equipment limit: {ModSettings.EquipmentStackMaxUnits}U per stack; " +
             $"cable-spool limit: {ModSettings.CableSpoolsPerStack} per stack; " +
-            $"animation speed: {ModSettings.AnimationSpeed:0.00}x.");
+            $"animation speed: {ModSettings.AnimationSpeed:0.00}x; " +
+            $"restack cargo indicator: " +
+            $"{(ModSettings.RestackCargoIndicator ? "enabled" : "disabled")}.");
     }
 }

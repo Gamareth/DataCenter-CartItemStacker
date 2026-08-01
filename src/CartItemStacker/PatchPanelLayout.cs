@@ -272,6 +272,21 @@ internal static class PatchPanelLayerLayout
         _pendingStart = -1;
     }
 
+    internal static bool CancelPendingPlacement(TrolleyLoadingBay bay)
+    {
+        if (_pendingPanel is null)
+            return false;
+
+        var panel = _pendingPanel;
+        Slots.Remove(panel.Pointer);
+        TrolleyContext.Unregister(panel);
+        panel.sizeInU = 1;
+        _pendingPanel = null;
+        _pendingStart = -1;
+        BoxLayerLayout.RebuildLayerReservations(bay);
+        return true;
+    }
+
     internal static void Forget(UsableObject panel)
     {
         if (panel is not null)
@@ -343,13 +358,19 @@ internal static class PatchPanelLayerLayout
 
         UsableObject candidate = null;
         var candidateOrdinal = -1;
+        var removedRow =
+            removedOrdinal / CartLayout.PatchPanelsPerLayer;
         foreach (var item in TrolleyContext.Items)
             if (IsPatchPanel(item) &&
                 !item.objectInHands &&
                 GetItemStack(item) == stack)
             {
                 var ordinal = GetItemOrdinal(item);
-                if (ordinal > removedOrdinal && ordinal > candidateOrdinal)
+                if (LayerCompactionRules.IsFromHigherRow(
+                        ordinal,
+                        removedOrdinal,
+                        CartLayout.PatchPanelsPerLayer) &&
+                    ordinal > candidateOrdinal)
                 {
                     candidate = item;
                     candidateOrdinal = ordinal;
@@ -363,11 +384,14 @@ internal static class PatchPanelLayerLayout
             var destination = candidate.transform.position +
                 bay.transform.TransformVector(newAnchor - oldAnchor);
             var movementToken = ++_gravityMovementToken;
-            MelonCoroutines.Start(AnimateGravityMove(
+            MelonCoroutines.Start(StoredCargoMotion.AnimateAbsolute(
                 candidate,
                 destination,
                 candidate.transform.rotation,
-                movementToken));
+                ModSettings.GetAnimationDuration(GravityMoveDuration),
+                StoredCargoMotion.PositionEasing.SmoothStep,
+                StoredCargoMotion.RotationMotion.Fixed,
+                () => movementToken == _gravityMovementToken));
             Slots[candidate.Pointer] =
                 new PatchSlot(stack, removedOrdinal);
             candidate.trolleySlotIndex =
@@ -376,50 +400,17 @@ internal static class PatchPanelLayerLayout
                 (removedOrdinal / CartLayout.PatchPanelsPerLayer) *
                     CartLayout.PatchLayerU;
             candidate.storedPosition = candidate.trolleySlotIndex;
+            ScheduleAbsoluteStackNormalization(
+                bay, stack, movementToken, $"patch gravity after {reason}");
         }
         RebuildReservations(bay);
         ModSettings.Debug(
             candidate is null
-                ? $"Patch gravity found no panel above gap {removedOrdinal} " +
+                ? $"Patch gravity kept row {removedRow + 1} in place after " +
+                    $"gap {removedOrdinal} because no higher row was occupied " +
                     $"on stack {stack + 1}."
                 : $"Patch gravity moved panel {candidateOrdinal} to gap " +
                     $"{removedOrdinal} on stack {stack + 1} after {reason}.");
-    }
-
-    private static IEnumerator AnimateGravityMove(
-        UsableObject panel,
-        Vector3 destination,
-        Quaternion rotation,
-        int movementToken)
-    {
-        if (panel?.transform is null)
-            yield break;
-
-        var start = panel.transform.position;
-        var elapsed = 0f;
-        var duration = ModSettings.GetAnimationDuration(GravityMoveDuration);
-        while (elapsed < duration)
-        {
-            yield return null;
-            if (movementToken != _gravityMovementToken ||
-                panel is null ||
-                panel.objectInHands ||
-                panel.transform is null)
-                yield break;
-
-            elapsed += Time.deltaTime;
-            var linear = Mathf.Clamp01(elapsed / duration);
-            var eased = linear * linear * (3f - 2f * linear);
-            panel.transform.SetPositionAndRotation(
-                Vector3.Lerp(start, destination, eased),
-                rotation);
-        }
-
-        if (movementToken == _gravityMovementToken &&
-            panel is not null &&
-            !panel.objectInHands &&
-            panel.transform is not null)
-            panel.transform.SetPositionAndRotation(destination, rotation);
     }
 
     internal static void Arrange(TrolleyLoadingBay bay, string reason)
@@ -774,17 +765,79 @@ internal static class PatchPanelLayerLayout
                 item.objectInHands ||
                 GetItemStack(item) != stack)
                 continue;
-            MelonCoroutines.Start(AnimateGravityMove(
+            MelonCoroutines.Start(StoredCargoMotion.AnimateAbsolute(
                 item,
                 item.transform.position + delta,
                 item.transform.rotation,
-                movementToken));
+                ModSettings.GetAnimationDuration(GravityMoveDuration),
+                StoredCargoMotion.PositionEasing.SmoothStep,
+                StoredCargoMotion.RotationMotion.Fixed,
+                () => movementToken == _gravityMovementToken));
             moved++;
         }
         if (moved > 0)
+        {
+            ScheduleAbsoluteStackNormalization(
+                bay,
+                stack,
+                movementToken,
+                $"logical equipment height change {deltaU:+#;-#;0}U");
             ModSettings.Debug(
                 $"Shifted {moved} patch panel(s) by {deltaU}U on " +
                 $"stack {stack + 1}.");
+        }
+    }
+
+    private static void ScheduleAbsoluteStackNormalization(
+        TrolleyLoadingBay bay,
+        int stack,
+        int movementToken,
+        string reason) =>
+        MelonCoroutines.Start(NormalizeStackAfterMovement(
+            bay, stack, movementToken, reason));
+
+    private static IEnumerator NormalizeStackAfterMovement(
+        TrolleyLoadingBay bay,
+        int stack,
+        int movementToken,
+        string reason)
+    {
+        // Let the latest server/box movement reach its final pose before using
+        // renderer bounds as the support surface. This is a single event-driven
+        // settle step, not continuous layout polling.
+        yield return new WaitForSeconds(
+            ModSettings.GetAnimationDuration(GravityMoveDuration) + 0.05f);
+        if (movementToken != _gravityMovementToken)
+            yield break;
+
+        NormalizeStackAbsolute(bay, stack, reason);
+    }
+
+    internal static int NormalizeStackAbsolute(
+        TrolleyLoadingBay bay,
+        int stack,
+        string reason)
+    {
+        if (bay?.transform is null || stack < 0 || stack >= CartLayout.StackCount)
+            return 0;
+
+        var normalized = 0;
+        foreach (var panel in TrolleyContext.Items)
+        {
+            if (!IsPatchPanel(panel) || panel.objectInHands ||
+                !Slots.TryGetValue(panel.Pointer, out var slot) ||
+                slot.Stack != stack)
+                continue;
+
+            NormalizeStoredPose(bay, panel);
+            normalized++;
+        }
+
+        if (normalized > 0)
+            ModSettings.Debug(
+                $"Normalized {normalized} patch panel(s) on stack " +
+                $"{stack + 1} to absolute slot-derived end poses after {reason}.");
+        return normalized;
     }
 
     private static Vector3 GetLocalAnchor(int stack, int ordinal)
