@@ -27,7 +27,9 @@ In short: everything a data center technician with ambitious stacking plans coul
 - [MelonLoader](https://github.com/LavaGang/MelonLoader) 0.7.3 or a compatible 0.7.x release.
 - A single-player game. Multiplayer and co-op are currently untested and unsupported.
 
-Version 1.0.0 was built against Unity `6000.4.12f1`, MelonLoader `0.7.3 Open-Beta`, and the Data Center IL2CPP assemblies available on August 1, 2026.
+Version 1.0.1 was built against Data Center Steam build `24534930`, Unity
+`6000.4.12f1`, MelonLoader `0.7.3 Open-Beta`, and the Data Center IL2CPP
+assemblies available on August 6, 2026.
 
 ## Installation
 

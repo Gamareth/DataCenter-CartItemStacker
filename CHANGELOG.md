@@ -2,6 +2,18 @@
 
 All notable changes to Cart Item Stacker are documented in this file.
 
+## [1.0.1] - 2026-08-06
+
+### Changed
+
+- Increased filled SFP overflow-tray capacity from 19 to 20 trays.
+- Increased empty SFP tray capacity from 17 to 20 trays.
+
+### Compatibility
+
+- Built and tested with Data Center Steam build `24534930`, Unity
+  `6000.4.12f1`, MelonLoader `0.7.3 Open-Beta`, and .NET 6.
+
 ## [1.0.0] - 2026-08-01
 
 ### Added
