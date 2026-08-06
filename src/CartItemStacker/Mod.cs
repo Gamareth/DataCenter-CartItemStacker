@@ -21,10 +21,10 @@ internal static class CartLayout
     internal const int ServerSlots = StackCount * SlotsPerStack;
     internal const int ModuleTypeCount = 4;
     internal const int ActiveModuleTraySlots = ModuleTypeCount;
-    internal const int FilledOverflowTraySlots = 19;
+    internal const int FilledOverflowTraySlots = 20;
     internal const int FilledModuleTraySlots =
         ActiveModuleTraySlots + FilledOverflowTraySlots;
-    internal const int EmptyModuleTraySlots = 17;
+    internal const int EmptyModuleTraySlots = 20;
     internal const int ModuleTraySlots =
         FilledModuleTraySlots + EmptyModuleTraySlots;
     internal const int CableStackCount = 2;
