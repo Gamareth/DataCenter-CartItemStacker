@@ -13,6 +13,7 @@ internal static class ModSettings
     internal const float DefaultAnimationSpeed = 1.0f;
     internal const float MinimumAnimationSpeed = 0.5f;
     internal const float MaximumAnimationSpeed = 2.0f;
+    internal const bool DefaultAutoUpdateFromWorkshop = true;
     internal const bool DefaultRestackCargoIndicator = true;
     internal const bool DefaultDebugLogging = false;
 
@@ -24,6 +25,7 @@ internal static class ModSettings
     private static MelonPreferences_Entry<int> _equipmentStackMaxUnits;
     private static MelonPreferences_Entry<int> _cableSpoolsPerStack;
     private static MelonPreferences_Entry<float> _animationSpeed;
+    private static MelonPreferences_Entry<bool> _autoUpdateFromWorkshop;
     private static MelonPreferences_Entry<bool> _restackCargoIndicator;
     private static MelonPreferences_Entry<bool> _debugLogging;
 
@@ -38,6 +40,9 @@ internal static class ModSettings
 
     internal static float AnimationSpeed =>
         _animationSpeed?.Value ?? DefaultAnimationSpeed;
+
+    internal static bool AutoUpdateFromWorkshop =>
+        _autoUpdateFromWorkshop?.Value ?? DefaultAutoUpdateFromWorkshop;
 
     internal static bool RestackCargoIndicator =>
         _restackCargoIndicator?.Value ?? DefaultRestackCargoIndicator;
@@ -75,6 +80,11 @@ internal static class ModSettings
             DefaultAnimationSpeed,
             "Animation speed",
             "Movement animation speed multiplier, from 0.5 through 2.0.");
+        _autoUpdateFromWorkshop = _category.CreateEntry(
+            "AutoUpdateFromWorkshop",
+            DefaultAutoUpdateFromWorkshop,
+            "Automatically update from Steam Workshop",
+            "After Workshop synchronization, stage a verified newer Cart Item Stacker DLL and install it after Data Center closes.");
         _restackCargoIndicator = _category.CreateEntry(
             "RestackCargoIndicator",
             DefaultRestackCargoIndicator,

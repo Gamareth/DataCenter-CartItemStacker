@@ -42,6 +42,26 @@ Check("Boxes use the same higher-row-only rule",
     LayerCompactionRules.IsFromHigherRow(3, 1, 3));
 Check("Invalid layer compaction input is rejected",
     !LayerCompactionRules.IsFromHigherRow(7, 0, 0));
+var hashA = new string('A', 64);
+var hashB = new string('B', 64);
+Check("Newer Workshop mod version is accepted",
+    WorkshopUpdateRules.ShouldStageUpdate(
+        new Version(1, 1, 0), new Version(1, 2, 0), 100, 100, hashA, hashB));
+Check("Older Workshop mod version is rejected",
+    !WorkshopUpdateRules.ShouldStageUpdate(
+        new Version(1, 1, 0), new Version(1, 0, 0), 200, 100, hashA, hashB));
+Check("Identical Workshop payload is ignored",
+    !WorkshopUpdateRules.ShouldStageUpdate(
+        new Version(1, 1, 0), new Version(1, 1, 0), 200, 100, hashA, hashA));
+Check("Newer same-version compatibility build is accepted",
+    WorkshopUpdateRules.ShouldStageUpdate(
+        new Version(1, 1, 0), new Version(1, 1, 0), 200, 100, hashA, hashB));
+Check("Previously applied same-version build is ignored",
+    !WorkshopUpdateRules.ShouldStageUpdate(
+        new Version(1, 1, 0), new Version(1, 1, 0), 100, 100, hashA, hashB));
+Check("Invalid Workshop payload hash is rejected",
+    !WorkshopUpdateRules.ShouldStageUpdate(
+        new Version(1, 1, 0), new Version(1, 2, 0), 200, 100, "invalid", hashB));
 if (failures.Count == 0)
 {
     Console.WriteLine("All Cart Item Stacker logic tests passed.");

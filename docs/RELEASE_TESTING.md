@@ -70,7 +70,37 @@ After each load, verify item count, section assignment, alignment, selectability
 - `CableSpoolsPerStack = 1`, `4`, `8`, and an invalid value.
 - `AnimationSpeed = 0.5`, `1.0`, and `2.0`.
 - `RestackCargoIndicator = true` and `false` during save-load reconstruction.
+- `AutoUpdateFromWorkshop = true` and `false`.
 - Confirm that normal placement, removal, compaction and section gravity never
   apply the orange, charcoal or green restack colors.
 - Disable with an empty trolley.
 - Request disable with a loaded trolley, unload it completely, and confirm native behavior afterwards.
+
+## Workshop update tests
+
+- Launch without subscribing to Workshop item `3775738163`; confirm that the
+  update check exits quietly and normal trolley behavior is unaffected.
+- Launch with an identical Workshop DLL; confirm that no updater is scheduled.
+- Launch with an older Workshop DLL; confirm that it never replaces the newer
+  installed version and logs that Cart Item Stacker is up to date.
+- Launch with a newer verified Workshop DLL; confirm that the console reports
+  that the update is available and automatic installation begins after exit.
+- While the game remains open, confirm that the DLL in `Data Center/Mods` is
+  unchanged and no hot reload occurs.
+- Close the game; confirm that the hidden updater replaces only
+  `Data Center/Mods/CartItemStacker.dll` and that
+  `UserData/CartItemStackerUpdater.log` reports success.
+- Start the game again and confirm that the new version is loaded.
+- Publish a same-version compatibility rebuild with a newer Workshop timestamp
+  and a different hash; confirm that it updates once and is not reapplied on
+  later launches.
+- Tamper with a staged DLL after scheduling but before game exit; confirm that
+  the helper rejects it because the version or SHA-256 hash changed.
+- Confirm that the Workshop content contains `CartItemStacker.dll` and optional
+  documentation only, with no separate updater binaries or runtime manifests.
+  Confirm that the embedded updater is extracted only after a verified update
+  is found.
+- After the helper installs an update, start the game and confirm that the
+  success marker, temporary updater DLL, `.deps.json`, `.runtimeconfig.json`,
+  and empty updater directory are removed while the persistent state and
+  diagnostic log remain available.

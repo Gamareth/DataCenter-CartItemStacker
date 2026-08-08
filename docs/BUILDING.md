@@ -26,7 +26,7 @@ dotnet build src/CartItemStacker/CartItemStacker.csproj -c Release `
 ## Build
 
 ```powershell
-dotnet build src/CartItemStacker/CartItemStacker.csproj -c Release
+dotnet build CartItemStacker.sln -c Release
 ```
 
 The resulting DLL is written to:
@@ -34,6 +34,29 @@ The resulting DLL is written to:
 ```text
 src/CartItemStacker/bin/Release/net6.0/CartItemStacker.dll
 ```
+
+The post-exit updater is published as a platform-neutral, framework-dependent
+managed application and embedded into `CartItemStacker.dll` during the build.
+The embedded payload consists of its DLL, dependency manifest, and runtime
+configuration; it contains no operating-system-specific app host.
+
+Its intermediate publish output is written to:
+
+```text
+src/CartItemStacker/obj/Release/EmbeddedUpdater/
+```
+
+A Workshop package that supports automatic updates only needs the mod DLL in
+its content root:
+
+```text
+CartItemStacker.dll
+```
+
+The mod extracts its embedded updater into `UserData/CartItemStackerUpdater`
+only when a verified update is ready. A successful update leaves a marker that
+causes the temporary updater DLL, `.deps.json`, `.runtimeconfig.json`, marker,
+and empty directory to be removed on the next game launch.
 
 ## Run the dependency-free capacity tests
 

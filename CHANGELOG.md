@@ -2,6 +2,29 @@
 
 All notable changes to Cart Item Stacker are documented in this file.
 
+## [1.1.0] - 2026-08-08
+
+### Added
+
+- Added an event-driven Steam Workshop update check after Data Center completes
+  its native Workshop synchronization.
+- Added an embedded platform-neutral managed updater that waits for the exact
+  game process to exit before atomically replacing the installed mod DLL, then
+  cleans up its temporary runtime files on the next successful launch.
+- Added assembly identity, semantic version, Workshop timestamp, and SHA-256
+  validation before and during installation.
+- Added the `AutoUpdateFromWorkshop` preference, enabled by default.
+
+### Changed
+
+- Increased filled SFP overflow-tray capacity from 20 to 21 trays.
+- Increased empty SFP tray capacity from 20 to 21 trays.
+
+### Compatibility
+
+- Built against Data Center Steam build `24534930`, Unity `6000.4.12f1`,
+  MelonLoader `0.7.3 Open-Beta`, and .NET 6.
+
 ## [1.0.1] - 2026-08-06
 
 ### Changed

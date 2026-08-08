@@ -4,7 +4,7 @@ Do you find yourself cramming more and more equipment onto the trolley, only to 
 
 Search no more. Cart Item Stacker replaces the trolley's entire stacking system.
 
-The result is the kind of capacity a real-world data center technician might squeeze onto a trolley — plus an extra 25% for gameplay convenience.
+The result is the kind of capacity a real-world data center technician might squeeze onto a trolley—plus an extra 25% for gameplay convenience.
 
 ## Features
 
@@ -14,13 +14,16 @@ The result is the kind of capacity a real-world data center technician might squ
 - Two dedicated stacks for cable spools.
 - Automatic sorting and smooth compaction when items are removed.
 - Configurable equipment and cable-spool capacity.
+- Verified updates installed after Data Center exits.
 
 In short: everything a data center technician with ambitious stacking plans could want.
 
 ## Important
 
 - MelonLoader is required.
-- Subscribing downloads the DLL, but it must still be copied from the Workshop content directory into `Data Center/Mods`.
+- Version 1.1.0 requires one final manual copy from the Workshop content
+  directory into `Data Center/Mods`. Later Workshop updates install
+  automatically after Data Center exits and become active on the next launch.
 - Single-player is supported. Multiplayer and co-op are currently untested and unsupported.
 
 Full installation instructions, source code, releases, and issue reporting:

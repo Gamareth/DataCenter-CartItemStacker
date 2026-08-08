@@ -21,10 +21,10 @@ internal static class CartLayout
     internal const int ServerSlots = StackCount * SlotsPerStack;
     internal const int ModuleTypeCount = 4;
     internal const int ActiveModuleTraySlots = ModuleTypeCount;
-    internal const int FilledOverflowTraySlots = 20;
+    internal const int FilledOverflowTraySlots = 21;
     internal const int FilledModuleTraySlots =
         ActiveModuleTraySlots + FilledOverflowTraySlots;
-    internal const int EmptyModuleTraySlots = 20;
+    internal const int EmptyModuleTraySlots = 21;
     internal const int ModuleTraySlots =
         FilledModuleTraySlots + EmptyModuleTraySlots;
     internal const int CableStackCount = 2;
@@ -120,20 +120,38 @@ internal static class CartLayout
 public sealed class Mod : MelonMod
 {
     internal const string DisplayName = "Cart Item Stacker";
-    internal const string Version = "1.0.1";
+    internal const string Version = "1.1.0";
     internal const string Author = "Gamareth";
 
     public override void OnInitializeMelon()
     {
         ModSettings.Initialize();
         NativeSaveLifecycle.Initialize();
+        WorkshopAutoUpdater.CleanupAfterSuccessfulUpdate();
         LoggerInstance.Msg(
             $"{DisplayName} {Version} initialized. " +
             $"Requested state: {(ModSettings.RequestedEnabled ? "enabled" : "disabled")}; " +
             $"equipment limit: {ModSettings.EquipmentStackMaxUnits}U per stack; " +
             $"cable-spool limit: {ModSettings.CableSpoolsPerStack} per stack; " +
             $"animation speed: {ModSettings.AnimationSpeed:0.00}x; " +
+            $"Workshop auto-update: " +
+            $"{(ModSettings.AutoUpdateFromWorkshop ? "enabled" : "disabled")}; " +
             $"restack cargo indicator: " +
             $"{(ModSettings.RestackCargoIndicator ? "enabled" : "disabled")}.");
+    }
+
+    public override void OnLateInitializeMelon()
+    {
+        WorkshopAutoUpdater.CheckAfterInitialization();
+    }
+
+    public override void OnSceneWasInitialized(int buildIndex, string sceneName)
+    {
+        WorkshopAutoUpdater.CheckAfterInitialization();
+    }
+
+    public override void OnApplicationQuit()
+    {
+        WorkshopAutoUpdater.OnApplicationQuit();
     }
 }
