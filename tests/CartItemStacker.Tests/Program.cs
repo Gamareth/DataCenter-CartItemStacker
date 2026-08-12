@@ -42,6 +42,20 @@ Check("Boxes use the same higher-row-only rule",
     LayerCompactionRules.IsFromHigherRow(3, 1, 3));
 Check("Invalid layer compaction input is rejected",
     !LayerCompactionRules.IsFromHigherRow(7, 0, 0));
+Check("Cart-local discovery accepts cargo with half its footprint inside",
+    LocalEnvelopeRules.HasMeaningfulOverlap(
+        -1f, 1f, 0f, 1f, -0.5f, 0.5f,
+        0f, 2f, 0f, 2f, -1f, 1f));
+Check("Cart-local discovery rejects nearby cargo with too little overlap",
+    !LocalEnvelopeRules.HasMeaningfulOverlap(
+        0.8f, 1.8f, 0f, 1f, -0.5f, 0.5f,
+        -1f, 1f, 0f, 2f, -1f, 1f));
+Check("SFP routing prefers the fullest compatible partial tray",
+    SfpRoutingRules.IsBetterPartial(4, 90, 3, 80));
+Check("SFP routing uses the earlier slot as a deterministic tie-breaker",
+    SfpRoutingRules.IsBetterPartial(4, 80, 4, 90));
+Check("SFP routing does not replace a fuller tray with an emptier tray",
+    !SfpRoutingRules.IsBetterPartial(3, 70, 4, 90));
 var hashA = new string('A', 64);
 var hashB = new string('B', 64);
 Check("Newer Workshop mod version is accepted",

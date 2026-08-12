@@ -708,8 +708,11 @@ internal static class BoxLayerLayout
         GetLayoutAnchorLocal(stack, row, column) +
         NativeRootTargetOffset;
 
+    private static readonly Quaternion CartLocalBoxRotation =
+        Quaternion.Euler(90f, 180f, 0f);
+
     private static Quaternion GetWorldRotation(TrolleyLoadingBay bay) =>
-        bay.transform.rotation * Quaternion.Euler(90f, 180f, 0f);
+        bay.transform.rotation * CartLocalBoxRotation;
 
     private static float GetVisualLayerHeight()
     {
@@ -719,23 +722,9 @@ internal static class BoxLayerLayout
             if (!IsBox(item) || item.objectInHands)
                 continue;
 
-            var renderers = item.GetComponentsInChildren<Renderer>(true);
-            if (renderers is null || renderers.Length == 0)
-                continue;
-
-            var minY = float.PositiveInfinity;
-            var maxY = float.NegativeInfinity;
-            foreach (var renderer in renderers)
-            {
-                if (renderer is null)
-                    continue;
-                var bounds = renderer.bounds;
-                minY = System.Math.Min(minY, bounds.min.y);
-                maxY = System.Math.Max(maxY, bounds.max.y);
-            }
-
-            if (!float.IsInfinity(minY) && !float.IsInfinity(maxY))
-                measured = System.Math.Max(measured, maxY - minY);
+            if (CartLocalGeometry.TryGetProjectedModelBounds(
+                item, CartLocalBoxRotation, out var localBounds))
+                measured = System.Math.Max(measured, localBounds.size.y);
         }
 
         // The first layer needs no vertical repetition yet. The configured

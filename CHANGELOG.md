@@ -2,6 +2,46 @@
 
 All notable changes to Cart Item Stacker are documented in this file.
 
+## [1.2.0] - 2026-08-12
+
+### Added
+
+- Added cart-wide SFP module routing. Clicking any stored cargo inserts the
+  held module into the fullest compatible partial tray, or the earliest
+  eligible empty tray when no partial tray is available.
+- Added postcondition validation for automatic SFP insertion so one click must
+  add exactly one module and release it from the player's hand.
+
+### Fixed
+
+- Replaced quadratic incoming-tray collider-pair generation with linear
+  suppression of only the incoming cargo colliders, preventing full-game
+  freezes on heavily loaded trolleys.
+- Converted box-layer height, patch-panel support height, load staging, and
+  fallback cargo discovery to cart-local geometry. Trolley position and tilt
+  no longer alter these layout calculations.
+- Made fallback save-load discovery use conservative visible-bounds overlap,
+  improving recognition of offset tray prefabs without claiming nearby cargo.
+- Coalesced tray rearrangement after native interactions that did not actually
+  change tray occupancy.
+- Routed automatic SFP placement through Data Center's private native insertion
+  branch, preserving the tray slot's native local orientation and complete
+  held-object cleanup without executing the tray pickup path.
+- Deferred filled-tray rearrangement until Data Center has completed its
+  delayed module animation and parented the module into the tray, preventing a
+  newly filled empty tray from moving out from under an in-flight module.
+- Treated clicks on stored empty or filled trays as the same cart-wide SFP
+  insertion request as clicks on every other cargo category; the clicked tray
+  no longer receives destination preference.
+- Allowed one explicit direct-placement exception: clicking the active tray of
+  the same SFP type while it has room uses Data Center's native placement into
+  that tray. Overflow, empty, full, and incompatible trays remain cart-wide
+  insertion requests.
+- Resolved held equipment from the complete PlayerManager hand-object
+  hierarchy while prioritizing the carrying cargo component over nested
+  contents. Modular switches can no longer masquerade as one of their fitted
+  SFP modules during trolley placement.
+
 ## [1.1.0] - 2026-08-08
 
 ### Added

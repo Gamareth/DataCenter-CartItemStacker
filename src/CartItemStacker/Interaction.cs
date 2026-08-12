@@ -16,7 +16,7 @@ internal static class TrolleyItemInteraction
     internal static void Reset()
     {
         PlacementTokens.Clear();
-        IncomingEquipmentIsolation.Reset();
+        IncomingCargoIsolation.Reset();
         TrolleyPhysicsDiagnostics.Reset();
         CargoMovementIndicator.Reset();
     }
@@ -76,14 +76,14 @@ internal static class TrolleyItemInteraction
 
         if (item is null || item.objectInHands || !item.isOnTrolley)
         {
-            IncomingEquipmentIsolation.Restore(item);
+            IncomingCargoIsolation.Restore(item);
             PlacementTokens.Remove(pointer);
             yield break;
         }
 
-        var equipmentWasSuppressed =
-            IncomingEquipmentIsolation.IsSuppressed(item);
-        if (equipmentWasSuppressed)
+        var cargoWasSuppressed =
+            IncomingCargoIsolation.IsSuppressed(item);
+        if (cargoWasSuppressed)
         {
             try
             {
@@ -95,10 +95,10 @@ internal static class TrolleyItemInteraction
             }
             catch (System.Exception exception)
             {
-                IncomingEquipmentIsolation.Restore(item);
+                IncomingCargoIsolation.Restore(item);
                 PlacementTokens.Remove(pointer);
                 Melon<CartItemStacker.Mod>.Logger.Warning(
-                    "Could not settle incoming equipment safely: " +
+                    "Could not settle incoming cargo safely: " +
                     exception.Message);
                 yield break;
             }
@@ -128,13 +128,13 @@ internal static class TrolleyItemInteraction
 
             var rootCollider = item.GetComponent<Collider>();
             var rootWasEnabled = rootCollider is not null && rootCollider.enabled;
-            if (!equipmentWasSuppressed &&
+            if (!cargoWasSuppressed &&
                 rootCollider is not null &&
                 !rootCollider.enabled)
                 rootCollider.enabled = true;
 
-            if (equipmentWasSuppressed)
-                IncomingEquipmentIsolation.Restore(item);
+            if (cargoWasSuppressed)
+                IncomingCargoIsolation.Restore(item);
 
             var previousTag = item.gameObject.tag;
             var previousLayer = item.gameObject.layer;
@@ -193,7 +193,7 @@ internal static class TrolleyItemInteraction
         }
         catch (System.Exception exception)
         {
-            IncomingEquipmentIsolation.Restore(item);
+            IncomingCargoIsolation.Restore(item);
             Melon<CartItemStacker.Mod>.Logger.Warning(
                 $"Could not finalize stored item after native delay: {exception.Message}");
         }
@@ -225,7 +225,7 @@ internal static class TrolleyItemInteraction
     }
 }
 
-internal static class IncomingEquipmentIsolation
+internal static class IncomingCargoIsolation
 {
     private readonly struct ColliderState
     {
@@ -261,7 +261,7 @@ internal static class IncomingEquipmentIsolation
         Suppressed[item.Pointer] = states;
         Physics.SyncTransforms();
         ModSettings.Debug(
-            $"Suppressed {states.Count} collider(s) for incoming equipment " +
+            $"Suppressed {states.Count} collider(s) for incoming cargo " +
             $"'{item.name}'.");
     }
 
@@ -289,7 +289,7 @@ internal static class IncomingEquipmentIsolation
         Suppressed.Remove(item.Pointer);
         Physics.SyncTransforms();
         ModSettings.Debug(
-            $"Restored {states.Count} collider(s) for settled equipment " +
+            $"Restored {states.Count} collider(s) for settled cargo " +
             $"'{item.name}'.");
     }
 
@@ -324,13 +324,12 @@ internal static class PlacementPoseDiagnostics
             : DescribeTransform(bay, target);
 
         var boundsSummary = "<none>";
-        if (PatchPanelLayerLayout.TryGetWorldBounds(item, out var bounds))
+        if (CartLocalGeometry.TryGetBounds(
+            bay.transform, item, out var bounds))
         {
-            var boundsCenter =
-                bay.transform.InverseTransformPoint(bounds.center);
             boundsSummary =
-                $"center=({boundsCenter.x:0.000},{boundsCenter.y:0.000}," +
-                $"{boundsCenter.z:0.000}) size=({bounds.size.x:0.000}," +
+                $"center=({bounds.center.x:0.000},{bounds.center.y:0.000}," +
+                $"{bounds.center.z:0.000}) size=({bounds.size.x:0.000}," +
                 $"{bounds.size.y:0.000},{bounds.size.z:0.000})";
         }
 

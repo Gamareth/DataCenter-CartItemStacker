@@ -1,14 +1,14 @@
-# Deferred SFP Auto-Routing Experiment
+# SFP Auto-Routing Design History
 
-Cart Item Stacker intentionally leaves loose SFP modules to Data Center's
-native interaction system. The player must click the specific compatible tray
-that should receive the held module. The mod only observes the content change
-and rearranges the complete tray within the trolley layout.
+This document records the requirements and failure modes discovered during the
+original deferred SFP auto-routing experiment. The feature was reintroduced in
+the unreleased development version only after implementing a single validated
+insertion transaction and cart-wide target routing.
 
-## Deferred idea
+## Routing rule
 
-A future optional feature could let a loose SFP module be placed by clicking
-any stored item on the trolley. The intended destination order was:
+A loose SFP module can be placed by clicking any stored item on the trolley.
+The destination order is:
 
 1. The fullest compatible partially filled tray.
 2. An eligible compatible empty tray when no partial tray can accept it.

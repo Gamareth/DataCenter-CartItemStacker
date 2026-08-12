@@ -21,15 +21,15 @@
 5. Confirm that the MelonLoader console contains:
 
    ```text
-   Cart Item Stacker 1.1.0 initialized
+   Cart Item Stacker 1.2.0 initialized
    ```
 
 ## Install from Steam Workshop
 
 Steam downloads code mods into the Workshop content directory but Data Center
-does not automatically load their DLLs. Version 1.1.0 therefore needs one final
-manual bootstrap copy. Later Workshop updates can install themselves safely
-after the game exits.
+does not automatically load their DLLs. The first installation therefore needs
+one final manual bootstrap copy. Later Workshop updates can install themselves
+safely after the game exits.
 
 1. Subscribe to Cart Item Stacker in the Steam Workshop.
 2. Locate the downloaded Workshop item under:

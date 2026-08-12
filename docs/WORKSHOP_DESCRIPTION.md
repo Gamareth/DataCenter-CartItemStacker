@@ -10,7 +10,7 @@ The result is the kind of capacity a real-world data center technician might squ
 
 - Servers, switches, firewalls, boxed racks, and patch panels neatly arranged across two vertical equipment stacks of up to 42U each.
 - Dedicated storage for SFP module trays, without modifying the trolley model.
-- Native manual SFP insertion into the specific tray you choose.
+- Cart-wide SFP insertion into the best compatible stored tray.
 - Two dedicated stacks for cable spools.
 - Automatic sorting and smooth compaction when items are removed.
 - Configurable equipment and cable-spool capacity.
@@ -21,7 +21,7 @@ In short: everything a data center technician with ambitious stacking plans coul
 ## Important
 
 - MelonLoader is required.
-- Version 1.1.0 requires one final manual copy from the Workshop content
+- The first installation requires one manual copy from the Workshop content
   directory into `Data Center/Mods`. Later Workshop updates install
   automatically after Data Center exits and become active on the next launch.
 - Single-player is supported. Multiplayer and co-op are currently untested and unsupported.

@@ -502,43 +502,11 @@ internal static class PatchPanelLayerLayout
         if (item?.transform is null)
             return false;
 
-        var minimum = new Vector3(
-            float.PositiveInfinity,
-            float.PositiveInfinity,
-            float.PositiveInfinity);
-        var maximum = new Vector3(
-            float.NegativeInfinity,
-            float.NegativeInfinity,
-            float.NegativeInfinity);
-        var found = false;
-        foreach (var renderer in item.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer is null || !renderer.enabled)
-                continue;
-
-            var bounds = renderer.localBounds;
-            var boundsCenter = bounds.center;
-            var boundsExtents = bounds.extents;
-            for (var x = -1; x <= 1; x += 2)
-                for (var y = -1; y <= 1; y += 2)
-                    for (var z = -1; z <= 1; z += 2)
-                    {
-                        var rendererLocal = boundsCenter + Vector3.Scale(
-                            boundsExtents,
-                            new Vector3(x, y, z));
-                        var rootLocal = item.transform.InverseTransformPoint(
-                            renderer.transform.TransformPoint(rendererLocal));
-                        var projected = targetLocalRotation * rootLocal;
-                        minimum = Vector3.Min(minimum, projected);
-                        maximum = Vector3.Max(maximum, projected);
-                        found = true;
-                    }
-        }
-
-        if (!found)
+        if (!CartLocalGeometry.TryGetProjectedModelBounds(
+            item, targetLocalRotation, out var projected))
             return false;
-        center = (minimum + maximum) * 0.5f;
-        minY = minimum.y;
+        center = projected.center;
+        minY = projected.min.y;
         return true;
     }
 
@@ -570,12 +538,10 @@ internal static class PatchPanelLayerLayout
                     ? item.trolleySlotIndex / CartLayout.SlotsPerStack
                     : -1;
             if (itemStack != stack ||
-                !TryGetWorldBounds(item, out var itemBounds))
+                !CartLocalGeometry.TryGetBounds(
+                    bay.transform, item, out var itemBounds))
                 continue;
-
-            var localTop = bay.transform.InverseTransformPoint(
-                itemBounds.max).y;
-            supportTop = System.Math.Max(supportTop, localTop);
+            supportTop = System.Math.Max(supportTop, itemBounds.max.y);
         }
         return !float.IsNegativeInfinity(supportTop);
     }
@@ -587,12 +553,12 @@ internal static class PatchPanelLayerLayout
         if (bay?.transform is null ||
             panel?.transform is null ||
             !Slots.TryGetValue(panel.Pointer, out var slot) ||
-            !TryGetWorldBounds(panel, out var panelBounds))
+            !CartLocalGeometry.TryGetBounds(
+                bay.transform, panel, out var panelBounds))
             return;
 
         var column = slot.Ordinal % CartLayout.PatchPanelsPerLayer;
-        var currentLocalCenter =
-            bay.transform.InverseTransformPoint(panelBounds.center);
+        var currentLocalCenter = panelBounds.center;
         var desiredLocalCenter = new Vector3(
             GetColumnCenterX(slot.Stack, column),
             currentLocalCenter.y,
@@ -608,7 +574,8 @@ internal static class PatchPanelLayerLayout
                 desiredLocalCenter.z - currentLocalCenter.z));
         Physics.SyncTransforms();
 
-        if (!TryGetWorldBounds(panel, out panelBounds))
+        if (!CartLocalGeometry.TryGetBounds(
+            bay.transform, panel, out panelBounds))
             return;
 
         var supportTop = float.NegativeInfinity;
@@ -630,7 +597,8 @@ internal static class PatchPanelLayerLayout
                     ? item.trolleySlotIndex / CartLayout.SlotsPerStack
                     : -1;
             if (itemStack != slot.Stack ||
-                !TryGetWorldBounds(item, out var itemBounds))
+                !CartLocalGeometry.TryGetBounds(
+                    bay.transform, item, out var itemBounds))
                 continue;
 
             supportTop = System.Math.Max(supportTop, itemBounds.max.y);
@@ -641,20 +609,20 @@ internal static class PatchPanelLayerLayout
             const float SurfaceGap = 0.002f;
             var row =
                 slot.Ordinal / CartLayout.PatchPanelsPerLayer;
-            panel.transform.position += new Vector3(
-                0f,
-                supportTop +
+            panel.transform.position += bay.transform.TransformVector(
+                new Vector3(0f,
+                    supportTop +
                     SurfaceGap +
                     row * VisualLayerSpacingY -
                     panelBounds.min.y,
-                0f);
+                    0f));
             Physics.SyncTransforms();
         }
 
-        if (TryGetWorldBounds(panel, out var finalBounds))
+        if (CartLocalGeometry.TryGetBounds(
+            bay.transform, panel, out var finalBounds))
         {
-            var localCenter =
-                bay.transform.InverseTransformPoint(finalBounds.center);
+            var localCenter = finalBounds.center;
             var localRotation =
                 Quaternion.Inverse(bay.transform.rotation) *
                 panel.transform.rotation;
@@ -671,30 +639,6 @@ internal static class PatchPanelLayerLayout
                 $"support top " +
                 $"{(float.IsNegativeInfinity(supportTop) ? "<deck>" : supportTop.ToString("0.000"))}.");
         }
-    }
-
-    internal static bool TryGetWorldBounds(
-        UsableObject item,
-        out Bounds bounds)
-    {
-        bounds = default;
-        if (item is null)
-            return false;
-
-        var found = false;
-        foreach (var renderer in item.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer is null || !renderer.enabled)
-                continue;
-            if (!found)
-            {
-                bounds = renderer.bounds;
-                found = true;
-            }
-            else
-                bounds.Encapsulate(renderer.bounds);
-        }
-        return found;
     }
 
     private static Vector3 GetModelLongAxis(UsableObject item)

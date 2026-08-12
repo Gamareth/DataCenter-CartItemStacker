@@ -410,10 +410,13 @@ internal static class DynamicTargetAllocator
 
             try
             {
-                var usable = gameObject.GetComponent<UsableObject>();
-                if (usable is not null &&
-                    usable.Pointer != System.IntPtr.Zero &&
-                    usable.objectInHands)
+                // Most held prefabs expose UsableObject on the exact object
+                // stored by PlayerManager. Some equipment prefabs (including
+                // switch variants) store a container object instead, with the
+                // actual usable component on a child. Resolve the complete
+                // hand-object hierarchy, but do not scan the scene.
+                var usable = FindHeldUsable(gameObject);
+                if (usable is not null)
                     return usable;
             }
             catch (System.Exception)
@@ -425,6 +428,43 @@ internal static class DynamicTargetAllocator
 
         return null;
     }
+
+    private static UsableObject FindHeldUsable(GameObject handObject)
+    {
+        var direct = handObject.GetComponent<UsableObject>();
+        if (IsHeldUsable(direct))
+            return direct;
+
+        // A few native interactions register a child GameObject in the hand
+        // array while UsableObject remains on its prefab root.
+        var parent = handObject.GetComponentInParent<UsableObject>();
+        if (IsHeldUsable(parent))
+            return parent;
+
+        var children = handObject.GetComponentsInChildren<UsableObject>(true);
+        UsableObject nestedContents = null;
+        foreach (var candidate in children)
+        {
+            if (!IsHeldUsable(candidate))
+                continue;
+
+            // Modular switches and filled trays contain SFPModule children.
+            // The carrying cargo object must win over its nested contents even
+            // when Data Center marks both components as objectInHands.
+            if (!ModuleTrayLayout.IsModule(candidate))
+                return candidate;
+
+            nestedContents ??= candidate;
+        }
+
+        // Only a genuinely loose module reaches this fallback.
+        return nestedContents;
+    }
+
+    private static bool IsHeldUsable(UsableObject candidate) =>
+        candidate is not null &&
+        candidate.Pointer != System.IntPtr.Zero &&
+        candidate.objectInHands;
 
     private static int FindFirstFree(
         Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppStructArray<int> used,

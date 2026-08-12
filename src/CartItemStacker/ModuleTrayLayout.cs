@@ -17,23 +17,6 @@ internal static class ModuleTrayLayout
         Empty
     }
 
-    private readonly struct AccessoryCollisionPair
-    {
-        internal readonly Collider First;
-        internal readonly Collider Second;
-        internal readonly bool OwnedByMod;
-
-        internal AccessoryCollisionPair(
-            Collider first,
-            Collider second,
-            bool ownedByMod)
-        {
-            First = first;
-            Second = second;
-            OwnedByMod = ownedByMod;
-        }
-    }
-
     private const int ActiveStart = CartLayout.ServerSlots;
     private const int OverflowStart =
         ActiveStart + CartLayout.ActiveModuleTraySlots;
@@ -66,7 +49,8 @@ internal static class ModuleTrayLayout
     private static int _pendingSlot = -1;
     private static int _arrangeToken;
     private static int _movementToken;
-    private static readonly List<AccessoryCollisionPair> CollisionPairs = new();
+    private static readonly System.Reflection.MethodInfo NativeModuleInsert =
+        AccessTools.Method(typeof(SFPBox), "InsertSFPBackIntoBox");
 
     internal static bool TryGetTray(UsableObject item, out SFPBox tray)
     {
@@ -107,7 +91,7 @@ internal static class ModuleTrayLayout
         return true;
     }
 
-    private static bool TryGetModule(
+    internal static bool TryGetModule(
         UsableObject item,
         out SFPModule module)
     {
@@ -129,8 +113,6 @@ internal static class ModuleTrayLayout
         try
         {
             module = item.GetComponent<SFPModule>();
-            if (module is null)
-                module = item.GetComponentInChildren<SFPModule>(true);
         }
         catch (System.Exception)
         {
@@ -142,12 +124,146 @@ internal static class ModuleTrayLayout
     internal static bool IsModule(UsableObject item) =>
         TryGetModule(item, out _);
 
+    internal static bool ShouldUseDirectActiveTrayPlacement(
+        UsableObject held,
+        UsableObject clickedTarget)
+    {
+        if (!TryGetModule(held, out var module) ||
+            !TryGetTray(clickedTarget, out var tray) ||
+            !tray.isOnTrolley ||
+            GetZone(CurrentSlot(tray)) != TrayZone.Active ||
+            !TrolleyRemovalPatch.BelongsToTrolley(
+                TrolleyContext.Current, tray))
+            return false;
+
+        try
+        {
+            // CanAcceptSFP verifies both the matching SFP type and available
+            // native capacity. Only that active, compatible, non-full tray is
+            // a deliberate direct-placement target.
+            return tray.CanAcceptSFP(module.sfpType);
+        }
+        catch (System.Exception)
+        {
+            return false;
+        }
+    }
+
+    internal static bool TryRouteHeldModule(
+        UsableObject held,
+        out SFPBox destination)
+    {
+        destination = null;
+        if (!TryGetModule(held, out var module))
+            return false;
+
+        SFPBox bestPartial = null;
+        var bestPartialFill = -1;
+        var bestPartialSlot = int.MaxValue;
+        SFPBox bestEmpty = null;
+        var bestEmptySlot = int.MaxValue;
+
+        foreach (var item in TrolleyContext.Items)
+        {
+            if (!TryGetTray(item, out var candidate) ||
+                candidate.objectInHands ||
+                !candidate.isOnTrolley ||
+                !TrolleyRemovalPatch.BelongsToTrolley(
+                    TrolleyContext.Current, candidate))
+                continue;
+
+            bool accepts;
+            try
+            {
+                accepts = candidate.CanAcceptSFP(module.sfpType);
+            }
+            catch (System.Exception)
+            {
+                continue;
+            }
+            if (!accepts)
+                continue;
+
+            var fill = CountModules(candidate);
+            var slot = CurrentSlot(candidate);
+            if (fill > 0)
+            {
+                if (SfpRoutingRules.IsBetterPartial(
+                    fill, slot, bestPartialFill, bestPartialSlot))
+                {
+                    bestPartial = candidate;
+                    bestPartialFill = fill;
+                    bestPartialSlot = slot;
+                }
+            }
+            else if (slot < bestEmptySlot &&
+                CanAddFilledTray(NormalizeType(candidate), candidate))
+            {
+                bestEmpty = candidate;
+                bestEmptySlot = slot;
+            }
+        }
+
+        destination = bestPartial ?? bestEmpty;
+        if (destination is null)
+        {
+            Melon<CartItemStacker.Mod>.Logger.Warning(
+                $"No compatible trolley SFP tray has room for '{held.name}'.");
+            return false;
+        }
+
+        var before = CountModules(destination);
+        if (NativeModuleInsert is null)
+        {
+            Melon<CartItemStacker.Mod>.Logger.Error(
+                "Could not find Data Center's native SFP insertion method.");
+            return false;
+        }
+
+        BeforeModuleChange(destination);
+        try
+        {
+            // Invoke only the private insertion branch. Calling the public tray
+            // interaction would continue into its pickup path, while calling
+            // ReturnSFPDirectly alone skips native held-object cleanup and can
+            // produce a prefab-orientation mismatch.
+            NativeModuleInsert.Invoke(destination, null);
+        }
+        catch (System.Exception exception)
+        {
+            Melon<CartItemStacker.Mod>.Logger.Error(
+                $"Automatic SFP insertion failed before completion: " +
+                $"{exception.InnerException?.Message ?? exception.Message}");
+            return false;
+        }
+
+        var after = CountModules(destination);
+        var noLongerHeld = !module.objectInHands &&
+            DynamicTargetAllocator.GetHeldObject()?.Pointer != module.Pointer;
+        if (after != before + 1 || !noLongerHeld)
+        {
+            // Never retry another tray after native insertion reported success:
+            // doing so can duplicate a partially completed transaction.
+            Melon<CartItemStacker.Mod>.Logger.Error(
+                $"Automatic SFP insertion completed with an invalid " +
+                $"postcondition (tray {before}->{after}, " +
+                $"held={!noLongerHeld}). No retry was attempted.");
+            return false;
+        }
+
+        ScheduleArrangeAfterModuleArrival(
+            destination, module, "automatic module insertion");
+        ModSettings.Debug(
+            $"Automatically inserted '{held.name}' into '{destination.name}' " +
+            $"({before}->{after} modules)." );
+        return true;
+    }
+
     internal static bool IsAccessorySlot(int slot) =>
         slot >= ActiveStart && slot < CartLayout.CableStart;
 
     internal static void Reset()
     {
-        RestoreAccessoryCollisions();
         _pendingTray = null;
         _pendingSlot = -1;
         _arrangeToken++;
@@ -388,7 +504,6 @@ internal static class ModuleTrayLayout
             TrolleyContext.Unregister(tray);
             BoxLayerLayout.RebuildLayerReservations(bay);
             TrolleyPhysicsIsolation.RestoreItem(tray);
-            RefreshAccessoryCollisions();
         }
 
         ModSettings.Debug(
@@ -407,7 +522,6 @@ internal static class ModuleTrayLayout
         TrolleyContext.Unregister(tray);
         BoxLayerLayout.RebuildLayerReservations(bay);
         TrolleyPhysicsIsolation.RestoreItem(tray);
-        RefreshAccessoryCollisions();
         ClearPending();
         return true;
     }
@@ -679,7 +793,6 @@ internal static class ModuleTrayLayout
             movementToken);
 
         BoxLayerLayout.RebuildLayerReservations(bay);
-        RefreshAccessoryCollisions();
         LogTrayPoses(bay, reason);
     }
 
@@ -837,89 +950,6 @@ internal static class ModuleTrayLayout
         }
     }
 
-    private static void RefreshAccessoryCollisions()
-    {
-        // Incoming trays are isolated from stored cargo before native
-        // placement. Once arrangement runs, MoveToStorage has removed their
-        // rigidbody and persistent cargo-to-cargo ignore pairs are unnecessary.
-        // Rebuilding every collider pair here grew quadratically (13k+ pairs
-        // with a full row) and caused visible placement latency.
-        RestoreAccessoryCollisions();
-    }
-
-    internal static void IsolateIncomingTray(SFPBox tray)
-    {
-        if (tray?.transform is null)
-            return;
-
-        var sourceColliders = tray.GetComponentsInChildren<Collider>(true);
-        var changed = 0;
-        foreach (var other in TrolleyContext.Items)
-        {
-            if (other is null || other.objectInHands || !other.isOnTrolley ||
-                other.Pointer == tray.Pointer)
-                continue;
-
-            var otherColliders = other.GetComponentsInChildren<Collider>(true);
-            foreach (var first in sourceColliders)
-            {
-                if (first is null)
-                    continue;
-                foreach (var second in otherColliders)
-                {
-                    if (second is null || first.Pointer == second.Pointer ||
-                        IsAccessoryPairTracked(first, second))
-                        continue;
-
-                    var alreadyIgnored = Physics.GetIgnoreCollision(first, second);
-                    if (!alreadyIgnored)
-                    {
-                        Physics.IgnoreCollision(first, second, true);
-                        changed++;
-                    }
-                    CollisionPairs.Add(new AccessoryCollisionPair(
-                        first, second, !alreadyIgnored));
-                }
-            }
-        }
-
-        Physics.SyncTransforms();
-        ModSettings.Debug(
-            $"Pre-placement isolation for '{tray.name}' added " +
-            $"{changed} incoming-tray cargo collision pair(s).");
-    }
-
-    private static bool IsAccessoryPairTracked(Collider first, Collider second)
-    {
-        foreach (var pair in CollisionPairs)
-        {
-            if ((pair.First?.Pointer == first.Pointer &&
-                    pair.Second?.Pointer == second.Pointer) ||
-                (pair.First?.Pointer == second.Pointer &&
-                    pair.Second?.Pointer == first.Pointer))
-                return true;
-        }
-        return false;
-    }
-
-    private static void RestoreAccessoryCollisions()
-    {
-        foreach (var pair in CollisionPairs)
-        {
-            if (!pair.OwnedByMod || pair.First is null || pair.Second is null)
-                continue;
-            try
-            {
-                Physics.IgnoreCollision(pair.First, pair.Second, false);
-            }
-            catch (System.Exception)
-            {
-                // A module can be destroyed or replaced while its tray is stored.
-            }
-        }
-        CollisionPairs.Clear();
-    }
-
     internal static void ScheduleArrange(SFPBox tray, string reason)
     {
         if (tray is null || !tray.isOnTrolley ||
@@ -928,6 +958,20 @@ internal static class ModuleTrayLayout
 
         var token = ++_arrangeToken;
         MelonCoroutines.Start(ArrangeNextFrame(tray, token, reason));
+    }
+
+    internal static void ScheduleArrangeAfterModuleArrival(
+        SFPBox tray,
+        SFPModule module,
+        string reason)
+    {
+        if (tray is null || module?.transform is null || !tray.isOnTrolley ||
+            !TrolleyRemovalPatch.BelongsToTrolley(TrolleyContext.Current, tray))
+            return;
+
+        var token = ++_arrangeToken;
+        MelonCoroutines.Start(ArrangeAfterModuleArrival(
+            tray, module, token, reason));
     }
 
     private static void ScheduleArrangeAfterPlacement(
@@ -944,10 +988,8 @@ internal static class ModuleTrayLayout
 
     internal static void BeforeModuleChange(SFPBox tray)
     {
-        // Keep ignored cargo pairs active throughout the native module action.
-        // Arrange refreshes the complete set atomically on the next frame.
-        // Restoring here opened a physics window in which trays could collide
-        // with neighbouring cargo and nudge the trolley.
+        // Arrangement is coalesced onto the next frame after the native tray
+        // operation has updated its occupancy.
     }
 
     private static IEnumerator ArrangeNextFrame(
@@ -973,6 +1015,48 @@ internal static class ModuleTrayLayout
             tray.objectInHands)
             yield break;
         Arrange(TrolleyContext.Current, reason);
+    }
+
+    private static IEnumerator ArrangeAfterModuleArrival(
+        SFPBox tray,
+        SFPModule module,
+        int token,
+        string reason)
+    {
+        // Data Center reserves the tray slot synchronously, animates the loose
+        // module, and parents it into the slot only after its own delay. Never
+        // move the tray while that native flight is still using world space.
+        var elapsed = 0f;
+        var timeout = NativePlacementDelay * 2f;
+        while (elapsed < timeout &&
+            module?.transform is not null &&
+            tray?.transform is not null &&
+            !module.transform.IsChildOf(tray.transform))
+        {
+            yield return null;
+            if (token != _arrangeToken || !tray.isOnTrolley)
+                yield break;
+            elapsed += Time.deltaTime;
+        }
+
+        if (token != _arrangeToken ||
+            tray is null ||
+            module?.transform is null ||
+            !tray.isOnTrolley ||
+            !module.transform.IsChildOf(tray.transform))
+        {
+            Melon<CartItemStacker.Mod>.Logger.Warning(
+                $"Deferred tray rearrangement after {reason}: the module did " +
+                $"not reach '{tray?.name ?? "<missing>"}' within " +
+                $"{timeout:0.00}s.");
+            yield break;
+        }
+
+        // Parent and collider restoration occur in the same native coroutine
+        // step. One additional frame keeps our movement outside that step.
+        yield return null;
+        if (token == _arrangeToken && tray.isOnTrolley)
+            Arrange(TrolleyContext.Current, reason);
     }
 }
 
@@ -1013,15 +1097,72 @@ internal static class ModuleTrayReturnModulePatch
 [HarmonyPatch(typeof(SFPBox), nameof(SFPBox.InteractOnClick))]
 internal static class ModuleTrayNativeInteractionPatch
 {
-    private static void Prefix(SFPBox __instance)
+    private readonly struct InteractionState
     {
-        if (TrolleyContext.LayoutEnabled)
-            ModuleTrayLayout.BeforeModuleChange(__instance);
+        internal readonly int Count;
+        internal readonly SFPModule HeldModule;
+        internal readonly bool RoutedCartWide;
+
+        internal InteractionState(
+            int count,
+            SFPModule heldModule,
+            bool routedCartWide)
+        {
+            Count = count;
+            HeldModule = heldModule;
+            RoutedCartWide = routedCartWide;
+        }
     }
 
-    private static void Postfix(SFPBox __instance)
+    private static bool Prefix(
+        SFPBox __instance,
+        out InteractionState __state)
     {
+        ModuleTrayLayout.TryGetModule(
+            DynamicTargetAllocator.GetHeldObject(), out var module);
+
+        var routeCartWide =
+            TrolleyContext.LayoutEnabled &&
+            module is not null &&
+            TrolleyRemovalPatch.BelongsToTrolley(
+                TrolleyContext.Current, __instance) &&
+            !ModuleTrayLayout.ShouldUseDirectActiveTrayPlacement(
+                module, __instance);
+        __state = new InteractionState(
+            ModuleTrayLayout.CountModules(__instance),
+            module,
+            routeCartWide);
+
+        if (routeCartWide)
+        {
+            // Clicking any stored tray is a cart-wide insertion request. The
+            // clicked tray receives no preference over a fuller compatible
+            // partial tray or an earlier eligible empty tray.
+            ModuleTrayLayout.TryRouteHeldModule(module, out _);
+            return false;
+        }
+
         if (TrolleyContext.LayoutEnabled)
-            ModuleTrayLayout.ScheduleArrange(__instance, "native tray interaction");
+            ModuleTrayLayout.BeforeModuleChange(__instance);
+        return true;
+    }
+
+    private static void Postfix(SFPBox __instance, InteractionState __state)
+    {
+        if (__state.RoutedCartWide)
+            return;
+
+        if (TrolleyContext.LayoutEnabled &&
+            ModuleTrayLayout.CountModules(__instance) != __state.Count)
+        {
+            if (__state.HeldModule is not null)
+                ModuleTrayLayout.ScheduleArrangeAfterModuleArrival(
+                    __instance,
+                    __state.HeldModule,
+                    "native tray interaction");
+            else
+                ModuleTrayLayout.ScheduleArrange(
+                    __instance, "native tray interaction");
+        }
     }
 }

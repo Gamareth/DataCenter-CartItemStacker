@@ -675,33 +675,13 @@ internal static class TrolleyTargetPatch
         if (bay?.transform is null || item?.transform is null)
             return;
 
-        var renderers = item.GetComponentsInChildren<Renderer>(true);
-        var found = false;
-        var bounds = new Bounds();
-        foreach (var renderer in renderers)
-        {
-            if (renderer is null)
-                continue;
-            if (!found)
-            {
-                bounds = renderer.bounds;
-                found = true;
-            }
-            else
-            {
-                bounds.Encapsulate(renderer.bounds);
-            }
-        }
-
-        if (!found)
+        if (!CartLocalGeometry.TryGetBounds(
+            bay.transform, item, out var bounds))
             return;
-
-        var stagingFloor = bay.transform.TransformPoint(new Vector3(
-            0f,
-            BaseY + SlotsPerStack * U + StagingClearance,
-            0f));
-        item.transform.position += Vector3.up *
-            (stagingFloor.y - bounds.min.y);
+        var stagingFloorLocalY =
+            BaseY + SlotsPerStack * U + StagingClearance;
+        item.transform.position += bay.transform.TransformVector(
+            new Vector3(0f, stagingFloorLocalY - bounds.min.y, 0f));
     }
 
     private static bool FinalizeStagedItem(
@@ -914,25 +894,30 @@ internal static class TrolleyTargetPatch
             if (item.transform.IsChildOf(bay.transform) || item.isOnTrolley)
                 return true;
 
+            var accessory = ModuleTrayLayout.IsTray(item) ||
+                CableWheelLayout.IsCableWheel(item);
+            var minimum = new Vector3(
+                accessory ? -AccessoryEnvelopeHalfWidth : -EquipmentEnvelopeHalfWidth,
+                CargoEnvelopeMinimumHeight,
+                accessory ? AccessoryEnvelopeMinimumZ : EquipmentEnvelopeMinimumZ);
+            var maximum = new Vector3(
+                accessory ? AccessoryEnvelopeHalfWidth : EquipmentEnvelopeHalfWidth,
+                CargoEnvelopeMaximumHeight,
+                accessory ? AccessoryEnvelopeMaximumZ : EquipmentEnvelopeMaximumZ);
+
+            // Test renderer geometry in cart-local space so a tilted trolley
+            // does not change discovery and an offset prefab pivot cannot hide
+            // cargo that is visibly on the trolley.
+            if (CartLocalGeometry.TryGetBounds(
+                bay.transform, item, out var localBounds))
+                return CartLocalGeometry.HasMeaningfulOverlap(
+                    localBounds, minimum, maximum);
+
             var local = bay.transform.InverseTransformPoint(
                 item.transform.position);
-            if (local.y < CargoEnvelopeMinimumHeight ||
-                local.y > CargoEnvelopeMaximumHeight)
-                return false;
-
-            if (ModuleTrayLayout.IsTray(item) ||
-                CableWheelLayout.IsCableWheel(item))
-            {
-                return System.Math.Abs(local.x) <=
-                        AccessoryEnvelopeHalfWidth &&
-                    local.z >= AccessoryEnvelopeMinimumZ &&
-                    local.z <= AccessoryEnvelopeMaximumZ;
-            }
-
-            return System.Math.Abs(local.x) <=
-                    EquipmentEnvelopeHalfWidth &&
-                local.z >= EquipmentEnvelopeMinimumZ &&
-                local.z <= EquipmentEnvelopeMaximumZ;
+            return local.x >= minimum.x && local.x <= maximum.x &&
+                local.y >= minimum.y && local.y <= maximum.y &&
+                local.z >= minimum.z && local.z <= maximum.z;
         }
         catch (System.Exception)
         {

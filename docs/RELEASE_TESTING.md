@@ -32,12 +32,24 @@ Use copied or disposable save files. Do not use the only copy of a primary save.
 - Hold each filled SFP tray and click stored trolley cargo. Confirm that the
   complete tray follows the normal tray-placement animation and is never
   inserted into another tray as if it were a loose module.
-- Test empty tray storage and native manual module return behavior.
-- Hold a loose SFP module and click the specific compatible tray that should
-  receive it. Confirm that native insertion succeeds without the mod selecting
-  another tray.
-- Click a server, boxed rack, patch panel, or cable spool while holding a loose
-  SFP module. Confirm that the mod neither inserts it nor treats it as cargo.
+- Test empty tray storage and cart-wide automatic module return behavior.
+- Hold a loose SFP module and successively click a server, switch, router,
+  firewall, boxed rack, patch panel, filled tray, empty tray, and cable spool.
+  Confirm that every cargo category routes the module to the fullest compatible
+  partially filled tray, or to the earliest eligible empty tray.
+- After every automatic insertion, confirm that exactly one module was added,
+  the module physically occupies a native tray position, the destination tray
+  remains stored, and an unrelated item can immediately be picked up.
+- Insert a loose module into an empty stored tray and confirm that the tray
+  remains stationary until the native module animation has arrived, then moves
+  once into the filled layout with the module still attached.
+- While both a compatible partial tray and a compatible empty tray exist, click
+  directly on the empty tray while holding a loose module. Confirm that the
+  module goes to the fuller partial tray rather than the clicked empty tray.
+- Click the active compatible non-full tray while holding the same SFP type and
+  confirm that this one case inserts directly into the clicked tray. Repeat on
+  overflow, empty, full, and incompatible trays and confirm that every one of
+  those clicks remains a cart-wide insertion request.
 - Fill an empty stored tray natively and confirm that the tray moves from the
   empty row into the appropriate filled-tray layout.
 - Confirm that native module positions and rotations inside every tray type are
@@ -53,6 +65,9 @@ Use copied or disposable save files. Do not use the only copy of a primary save.
 - Fully mixed trolley.
 - Trolley with gaps created by prior removals.
 - Two consecutive save/load cycles.
+- Repeat a mixed-trolley load while the trolley is parked at a noticeable tilt.
+  Confirm that cart-local discovery finds the same items and does not claim
+  supported loose objects lying beside the trolley.
 - Load active, overflow, and empty SFP trays, then remove and replace one tray
   from each row. Its manually replaced root pose must exactly match its loaded
   pose.

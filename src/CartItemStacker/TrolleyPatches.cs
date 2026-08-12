@@ -62,11 +62,16 @@ internal static class TrolleyClickPatch
     {
         internal readonly int Used;
         internal readonly UsableObject Held;
+        internal readonly bool ModuleRouting;
 
-        internal ClickState(int used, UsableObject held)
+        internal ClickState(
+            int used,
+            UsableObject held,
+            bool moduleRouting = false)
         {
             Used = used;
             Held = held;
+            ModuleRouting = moduleRouting;
         }
     }
 
@@ -93,6 +98,14 @@ internal static class TrolleyClickPatch
         if (!TrolleyContext.LayoutEnabled)
             return true;
 
+        if (ModuleTrayLayout.IsModule(held))
+        {
+            __state = new ClickState(
+                __state.Used, held, moduleRouting: true);
+            ModuleTrayLayout.TryRouteHeldModule(held, out _);
+            return false;
+        }
+
         var boxCount = BoxLayerLayout.ExistingBoxCount(held);
         ModSettings.Debug(
             $"Trolley click BEFORE: held='{held?.name ?? "<none>"}', " +
@@ -110,7 +123,9 @@ internal static class TrolleyClickPatch
             // Isolate the incoming tray first so it cannot kick the trolley or
             // existing cargo before Postfix gets a chance to register it.
             TrolleyPhysicsIsolation.IgnoreStoredItem(incomingTray);
-            ModuleTrayLayout.IsolateIncomingTray(incomingTray);
+            // Suppress only this incoming object's colliders. Building every
+            // tray-to-cargo collider pair grows catastrophically on full carts.
+            IncomingCargoIsolation.Suppress(incomingTray);
         }
         else if (proceed &&
             (PatchPanelLayerLayout.IsPatchPanel(held) ||
@@ -127,7 +142,7 @@ internal static class TrolleyClickPatch
             // server's restored Rigidbody and colliders out of physics until
             // its native placement animation has fully settled.
             TrolleyPhysicsIsolation.IgnoreStoredItem(held);
-            IncomingEquipmentIsolation.Suppress(held);
+            IncomingCargoIsolation.Suppress(held);
         }
         return proceed;
     }
@@ -135,6 +150,8 @@ internal static class TrolleyClickPatch
     private static void Postfix(TrolleyLoadingBay __instance, ClickState __state)
     {
         if (!TrolleyContext.LayoutEnabled)
+            return;
+        if (__state.ModuleRouting)
             return;
 
         DynamicTargetAllocator.CompleteClick(__instance);
@@ -158,7 +175,7 @@ internal static class TrolleyClickPatch
             held.Pointer == __state.Held.Pointer)
         {
             // Native placement failed and the item stayed in hand.
-            IncomingEquipmentIsolation.Restore(__state.Held);
+            IncomingCargoIsolation.Restore(__state.Held);
             TrolleyPhysicsIsolation.RestoreItem(__state.Held);
         }
         ModSettings.Debug(
@@ -179,7 +196,7 @@ internal static class TrolleyClickPatch
             "native trolley placement exception");
         if (__state.Held is not null)
         {
-            IncomingEquipmentIsolation.Restore(__state.Held);
+            IncomingCargoIsolation.Restore(__state.Held);
             TrolleyPhysicsIsolation.RestoreItem(__state.Held);
         }
         Melon<CartItemStacker.Mod>.Logger.Warning(
@@ -210,8 +227,12 @@ internal static class HeldItemCargoClickPatch
             target is not null &&
             TrolleyRemovalPatch.BelongsToTrolley(bay, target))
         {
-            // Loose SFP modules remain entirely native. In particular, never
-            // reinterpret a click on stored cargo as trolley cargo placement.
+            if (ModuleTrayLayout.ShouldUseDirectActiveTrayPlacement(
+                held, target))
+                return;
+
+            __instance.i_interact = false;
+            ModuleTrayLayout.TryRouteHeldModule(held, out _);
             return;
         }
 
@@ -290,13 +311,15 @@ internal static class TrolleyRemovalPatch
             ModuleTrayLayout.IsModule(held) &&
             BelongsToTrolley(bay, __instance))
         {
-            // Let the game's native SFPBox interaction decide whether this
-            // specifically clicked tray accepts the held module. The mod only
-            // observes the resulting tray-content change and rearranges trays.
             __state = new RemovalState(
                 false, false, false, false, false,
                 -1, 0, -1, -1, -1);
-            return true;
+            if (ModuleTrayLayout.ShouldUseDirectActiveTrayPlacement(
+                held, __instance))
+                return true;
+
+            ModuleTrayLayout.TryRouteHeldModule(held, out _);
+            return false;
         }
 
         if (held is not null && held.Pointer != __instance.Pointer &&
@@ -361,6 +384,9 @@ internal static class TrolleyRemovalPatch
             return false;
 
         if (item.transform.IsChildOf(bay.transform))
+            return true;
+
+        if (item.isOnTrolley && TrolleyContext.IsRegistered(item))
             return true;
 
         var targets = bay.positionsOnTrolley;

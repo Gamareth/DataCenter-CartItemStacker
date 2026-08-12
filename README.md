@@ -14,8 +14,9 @@ squeeze onto a trolley, plus an extra 25% for gameplay convenience.
 - Servers, switches, firewalls, boxed racks, and patch panels neatly arranged across two vertical equipment stacks of up to 42U each.
 - Dedicated storage for up to 21 filled overflow trays and 21 empty SFP module
   trays, without modifying the trolley model.
-- Native manual SFP insertion: click the specific tray you want to fill, just
-  as in the unmodded game. The tray is then rearranged within the trolley layout.
+- Cart-wide SFP insertion: click any stored trolley item while holding a loose
+  module. The mod selects the fullest compatible partial tray first, then an
+  eligible empty tray, while the game retains native in-tray positioning.
 - Two dedicated stacks for cable spools.
 - Automatic sorting and smooth compaction when items are removed.
 - Configurable equipment and cable-spool capacity.
@@ -31,7 +32,7 @@ In short: everything a data center technician with ambitious stacking plans coul
 - [MelonLoader](https://github.com/LavaGang/MelonLoader) 0.7.3 or a compatible 0.7.x release.
 - A single-player game. Multiplayer and co-op are currently untested and unsupported.
 
-Version 1.1.0 was built against Data Center Steam build `24534930`, Unity
+Version 1.2.0 was built against Data Center Steam build `24534930`, Unity
 `6000.4.12f1`, MelonLoader `0.7.3 Open-Beta`, and the Data Center IL2CPP
 assemblies available on August 6, 2026.
 
@@ -48,7 +49,7 @@ therefore requires one manual bootstrap copy:
 3. Copy `CartItemStacker.dll` into
    `<Steam Library>/steamapps/common/Data Center/Mods`.
 4. Start Data Center and confirm that the MelonLoader console reports
-   `Cart Item Stacker 1.1.0 initialized`.
+   `Cart Item Stacker 1.2.0 initialized`.
 
 After that first copy, subscribed users receive automatic Workshop updates by
 default. Once Steam has synchronized a verified newer Workshop DLL, Cart Item

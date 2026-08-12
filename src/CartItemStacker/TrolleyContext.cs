@@ -326,12 +326,12 @@ internal static class TrolleyNativeColliderEnablePatch
                 return;
             }
 
-            if (IncomingEquipmentIsolation.IsSuppressed(item))
+            if (IncomingCargoIsolation.IsSuppressed(item))
             {
                 // Native code has just re-enabled the root collider. Keep all
                 // equipment colliders disabled until the finalizer has removed
                 // the restored Rigidbody at the settled target pose.
-                IncomingEquipmentIsolation.Reassert(item);
+                IncomingCargoIsolation.Reassert(item);
                 return;
             }
 
