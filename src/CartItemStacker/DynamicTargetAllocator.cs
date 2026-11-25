@@ -11,6 +11,7 @@ internal static class DynamicTargetAllocator
 {
     private const float BaseY = LayoutConstants.EquipmentBaseY;
     private const float U = LayoutConstants.UnitHeight;
+    private const float TrolleyDeckY = 0.019f;
     // BaseY was calibrated with the placement anchor of a 3U server resting on
     // the trolley. Data Center's horizontal server pose is top-anchored: the
     // target for an item starting at `level` must therefore represent
@@ -47,12 +48,10 @@ internal static class DynamicTargetAllocator
         if (CableWheelLayout.TryGetCableWheel(held, out var cableWheel))
             return CableWheelLayout.PreparePlacement(bay, cableWheel);
 
-        if (!ServerSectionCatalog.IsAllowed(held, out var record))
-        {
-            Melon<CartItemStacker.Mod>.Logger.Warning(
-                $"Rejected non-server-section item '{held.name}' (record='{record}').");
-            return false;
-        }
+        var knownEquipment = ServerSectionCatalog.IsKnown(held, out var record);
+        if (!knownEquipment)
+            ModSettings.Debug(
+                $"Using equipment stack placement for '{held.name}' (record='{record}').");
 
         var wasEmpty = IsTrolleyEmpty(bay, held);
         TrolleyContext.Register(held);
@@ -105,6 +104,7 @@ internal static class DynamicTargetAllocator
         {
             var applyFirstServerClearance =
                 wasEmpty &&
+                knownEquipment &&
                 !boxedRack &&
                 size == 3 &&
                 plannedStart == 0 &&
@@ -193,6 +193,7 @@ internal static class DynamicTargetAllocator
             // planned, even if native metadata selected a crossing slot.
             if (_pendingRackItem is not null && _pendingRackStart >= 0)
             {
+                TrolleyContext.UnassignedLoadItems.Remove(_pendingRackItem.Pointer);
                 _pendingRackItem.trolleySlotIndex = _pendingRackStart;
                 _pendingRackItem.storedPosition = _pendingRackStart;
                 _pendingRackItem.isOnTrolley = true;
@@ -350,8 +351,11 @@ internal static class DynamicTargetAllocator
             item,
             localRotation,
             out var projectedCenter,
-            out _))
+            out var projectedMinY))
         {
+            if (!ServerSectionCatalog.IsKnown(item, out _))
+                localPosition.y = TrolleyDeckY + level * U - projectedMinY;
+
             // A 180-degree turn exposes the server prefabs' off-center root:
             // X=0 alone therefore gives unequal faceplate/backplate margins.
             // Center the visible body while leaving the calibrated stack Z,

@@ -47,7 +47,7 @@ internal static class LoadedEquipmentLayout
 {
     internal static int RehydrateLoaded(
         TrolleyLoadingBay bay,
-        IEnumerable<UsableObject> loadedItems)
+        List<UsableObject> loadedItems)
     {
         if (bay?.transform is null || loadedItems is null)
             return 0;
@@ -72,6 +72,8 @@ internal static class LoadedEquipmentLayout
         }
 
         var assigned = 0;
+        var heights = new int[CartLayout.StackCount];
+        var overflow = new List<(UsableObject Item, int PreferredStack, int Size)>();
         for (var stack = 0; stack < byStack.Length; stack++)
         {
             byStack[stack].Sort((left, right) =>
@@ -86,29 +88,49 @@ internal static class LoadedEquipmentLayout
                 return leftLocal.x.CompareTo(rightLocal.x);
             });
 
-            var level = 0;
             foreach (var item in byStack[stack])
             {
                 var size = System.Math.Max(1, item.sizeInU);
-                if (level + size > CartLayout.SlotsPerStack)
+                if (!CapacityRules.CanAddEquipmentHeight(
+                    heights[stack], size, CartLayout.SlotsPerStack))
                 {
-                    Melon<CartItemStacker.Mod>.Logger.Warning(
-                        $"Loaded equipment '{item.name}' exceeds the physical " +
-                        $"{CartLayout.SlotsPerStack}U limit on stack {stack + 1}; " +
-                        "the item was left at its native saved pose.");
+                    overflow.Add((item, stack, size));
                     continue;
                 }
 
-                var slot = stack * CartLayout.SlotsPerStack + level;
-                item.trolleySlotIndex = slot;
-                item.storedPosition = slot;
-                item.isOnTrolley = true;
-                level += size;
+                Assign(item, stack, size, heights);
                 assigned++;
             }
         }
 
+        foreach (var (item, preferred, size) in overflow)
+        {
+            var stack = CapacityRules.ChooseLoadedEquipmentStack(
+                preferred, size, heights, CartLayout.SlotsPerStack);
+            if (stack >= 0)
+            {
+                Assign(item, stack, size, heights);
+                assigned++;
+                continue;
+            }
+
+            loadedItems.Remove(item);
+            TrolleyContext.ExcludeUnassignedLoadItem(item);
+            Melon<CartItemStacker.Mod>.Logger.Warning(
+                $"Loaded equipment '{item.name}' ({size}U) fits neither " +
+                "stack and was left at its native saved pose.");
+        }
+
         return assigned;
+    }
+
+    private static void Assign(UsableObject item, int stack, int size, int[] heights)
+    {
+        var slot = stack * CartLayout.SlotsPerStack + heights[stack];
+        item.trolleySlotIndex = slot;
+        item.storedPosition = slot;
+        item.isOnTrolley = true;
+        heights[stack] += size;
     }
 
     private static bool IsEquipment(UsableObject item) =>
@@ -117,5 +139,5 @@ internal static class LoadedEquipmentLayout
         !PatchPanelLayerLayout.IsPatchPanel(item) &&
         !ModuleTrayLayout.IsTray(item) &&
         !CableWheelLayout.IsCableWheel(item) &&
-        ServerSectionCatalog.IsAllowed(item, out _);
+        ServerSectionCatalog.IsEquipment(item);
 }

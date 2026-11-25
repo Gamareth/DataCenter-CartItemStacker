@@ -130,6 +130,7 @@ internal static class TrolleyTargetPatch
         TrolleyContext.Current = bay;
         TrolleyContext.Items.Clear();
         TrolleyContext.SaveItemsDiscovered = false;
+        TrolleyContext.UnassignedLoadItems.Clear();
         TrolleyContext.LayoutEnabled = false;
         TrolleyContext.PendingDisable = false;
         BoxLayerLayout.Reset();
@@ -225,15 +226,14 @@ internal static class TrolleyTargetPatch
         ExpandNativeTargets(bay);
         ApplyTargetPoses(bay);
 
+        var equipmentCount =
+            LoadedEquipmentLayout.RehydrateLoaded(bay, loadedItems);
         foreach (var item in loadedItems)
             TrolleyContext.Register(item);
 
         TrolleyPhysicsDiagnostics.ArmInitialization(
             bay, loadedItems, reason);
         TrolleyReconstructionLock.Begin(bay);
-
-        var equipmentCount =
-            LoadedEquipmentLayout.RehydrateLoaded(bay, loadedItems);
         BoxLayerLayout.RehydrateLoaded(bay, loadedItems);
         PatchPanelLayerLayout.RehydrateLoaded(bay, loadedItems);
         ModuleTrayLayout.RehydrateLoaded(bay, loadedItems);
@@ -867,23 +867,28 @@ internal static class TrolleyTargetPatch
 
         foreach (var item in UnityEngine.Object.FindObjectsOfType<UsableObject>())
         {
-            if (item?.transform is null || !IsSupportedCargo(item))
+            if (item?.transform is null ||
+                bay.transform.IsChildOf(item.transform))
                 continue;
-            if (IsLikelyStoredOnThisTrolley(bay, item))
+
+            var knownCargo = IsKnownCargo(item);
+            if ((knownCargo || ServerSectionCatalog.IsEquipment(item)) &&
+                IsLikelyStoredOnThisTrolley(bay, item, allowGeometry: knownCargo))
                 loadedItems.Add(item);
         }
         return loadedItems;
     }
 
-    private static bool IsSupportedCargo(UsableObject item) =>
+    private static bool IsKnownCargo(UsableObject item) =>
         ModuleTrayLayout.IsTray(item) ||
         PatchPanelLayerLayout.IsPatchPanel(item) ||
         CableWheelLayout.IsCableWheel(item) ||
-        ServerSectionCatalog.IsAllowed(item, out _);
+        ServerSectionCatalog.IsKnown(item, out _);
 
     private static bool IsLikelyStoredOnThisTrolley(
         TrolleyLoadingBay bay,
-        UsableObject item)
+        UsableObject item,
+        bool allowGeometry)
     {
         try
         {
@@ -893,6 +898,9 @@ internal static class TrolleyTargetPatch
 
             if (item.transform.IsChildOf(bay.transform) || item.isOnTrolley)
                 return true;
+
+            if (!allowGeometry)
+                return false;
 
             var accessory = ModuleTrayLayout.IsTray(item) ||
                 CableWheelLayout.IsCableWheel(item);

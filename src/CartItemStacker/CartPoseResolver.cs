@@ -107,7 +107,7 @@ internal static class CartPoseResolver
 
         if (logicalSlot < 0 ||
             logicalSlot >= CartLayout.ServerSlots ||
-            !ServerSectionCatalog.IsAllowed(item, out _))
+            !ServerSectionCatalog.IsEquipment(item))
             return false;
 
         DynamicTargetAllocator.ApplyServerTargetPose(

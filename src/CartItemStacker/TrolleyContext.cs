@@ -12,6 +12,7 @@ internal static class TrolleyContext
     internal static TrolleyLoadingBay Current;
     internal static readonly List<UsableObject> Items = new();
     internal static bool SaveItemsDiscovered;
+    internal static readonly HashSet<System.IntPtr> UnassignedLoadItems = new();
     internal static bool LayoutEnabled;
     internal static bool PendingDisable;
 
@@ -83,6 +84,9 @@ internal static class TrolleyContext
         return false;
     }
 
+    internal static void ExcludeUnassignedLoadItem(UsableObject item) =>
+        UnassignedLoadItems.Add(item.Pointer);
+
     internal static void DiscoverSaveItemsOnce(int trolleyStorageUid)
     {
         if (SaveItemsDiscovered || Current is null || Current.positionsOnTrolley is null)
@@ -92,7 +96,8 @@ internal static class TrolleyContext
         var targets = Current.positionsOnTrolley;
         foreach (var item in UnityEngine.Object.FindObjectsOfType<UsableObject>())
         {
-            if (item is null || item.transform is null)
+            if (item is null || item.transform is null ||
+                UnassignedLoadItems.Contains(item.Pointer))
                 continue;
 
             var slot = item.trolleySlotIndex;

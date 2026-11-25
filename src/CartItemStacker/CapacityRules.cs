@@ -11,6 +11,21 @@ internal static class CapacityRules
         configuredMaximumUnits >= 0 &&
         (long)currentUnits + additionalUnits <= configuredMaximumUnits;
 
+    internal static int ChooseLoadedEquipmentStack(
+        int preferredStack,
+        int size,
+        int[] heights,
+        int limit)
+    {
+        if (CanAddEquipmentHeight(heights[preferredStack], size, limit))
+            return preferredStack;
+
+        var otherStack = 1 - preferredStack;
+        return CanAddEquipmentHeight(heights[otherStack], size, limit)
+            ? otherStack
+            : -1;
+    }
+
     internal static bool CanAddCableSpool(
         int currentSpools,
         int configuredMaximumSpools) =>

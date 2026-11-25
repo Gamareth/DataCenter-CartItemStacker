@@ -14,6 +14,12 @@ Check("Negative equipment input is rejected",
     !CapacityRules.CanAddEquipmentHeight(-1, 1, 42));
 Check("Overflowing equipment input is rejected",
     !CapacityRules.CanAddEquipmentHeight(int.MaxValue, 1, 42));
+Check("Loaded equipment keeps its preferred stack when it fits",
+    CapacityRules.ChooseLoadedEquipmentStack(1, 4, new[] { 0, 38 }, 42) == 1);
+Check("Loaded equipment overflows to the other stack when it fits",
+    CapacityRules.ChooseLoadedEquipmentStack(0, 4, new[] { 40, 38 }, 42) == 1);
+Check("Loaded equipment has no destination when neither stack fits",
+    CapacityRules.ChooseLoadedEquipmentStack(0, 4, new[] { 40, 39 }, 42) == -1);
 Check("Fourth spool is accepted at a four-spool limit",
     CapacityRules.CanAddCableSpool(3, 4));
 Check("Fifth spool is rejected at a four-spool limit",

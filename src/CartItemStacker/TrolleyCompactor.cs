@@ -200,7 +200,7 @@ internal static class TrolleyCompactor
                 continue;
             if (BoxLayerLayout.IsBox(item) ||
                 ModuleTrayLayout.IsTray(item) ||
-                !ServerSectionCatalog.IsAllowed(item, out _))
+                !ServerSectionCatalog.IsEquipment(item))
                 continue;
 
             var slot = item.trolleySlotIndex;
@@ -299,7 +299,7 @@ internal static class TrolleyCompactor
                 continue;
             if (BoxLayerLayout.IsBox(item) ||
                 ModuleTrayLayout.IsTray(item) ||
-                !ServerSectionCatalog.IsAllowed(item, out _))
+                !ServerSectionCatalog.IsEquipment(item))
                 continue;
 
             var slot = item.trolleySlotIndex;

@@ -124,31 +124,6 @@ internal static class ModuleTrayLayout
     internal static bool IsModule(UsableObject item) =>
         TryGetModule(item, out _);
 
-    internal static bool ShouldUseDirectActiveTrayPlacement(
-        UsableObject held,
-        UsableObject clickedTarget)
-    {
-        if (!TryGetModule(held, out var module) ||
-            !TryGetTray(clickedTarget, out var tray) ||
-            !tray.isOnTrolley ||
-            GetZone(CurrentSlot(tray)) != TrayZone.Active ||
-            !TrolleyRemovalPatch.BelongsToTrolley(
-                TrolleyContext.Current, tray))
-            return false;
-
-        try
-        {
-            // CanAcceptSFP verifies both the matching SFP type and available
-            // native capacity. Only that active, compatible, non-full tray is
-            // a deliberate direct-placement target.
-            return tray.CanAcceptSFP(module.sfpType);
-        }
-        catch (System.Exception)
-        {
-            return false;
-        }
-    }
-
     internal static bool TryRouteHeldModule(
         UsableObject held,
         out SFPBox destination)
@@ -1101,16 +1076,13 @@ internal static class ModuleTrayNativeInteractionPatch
     {
         internal readonly int Count;
         internal readonly SFPModule HeldModule;
-        internal readonly bool RoutedCartWide;
 
         internal InteractionState(
             int count,
-            SFPModule heldModule,
-            bool routedCartWide)
+            SFPModule heldModule)
         {
             Count = count;
             HeldModule = heldModule;
-            RoutedCartWide = routedCartWide;
         }
     }
 
@@ -1121,26 +1093,9 @@ internal static class ModuleTrayNativeInteractionPatch
         ModuleTrayLayout.TryGetModule(
             DynamicTargetAllocator.GetHeldObject(), out var module);
 
-        var routeCartWide =
-            TrolleyContext.LayoutEnabled &&
-            module is not null &&
-            TrolleyRemovalPatch.BelongsToTrolley(
-                TrolleyContext.Current, __instance) &&
-            !ModuleTrayLayout.ShouldUseDirectActiveTrayPlacement(
-                module, __instance);
         __state = new InteractionState(
             ModuleTrayLayout.CountModules(__instance),
-            module,
-            routeCartWide);
-
-        if (routeCartWide)
-        {
-            // Clicking any stored tray is a cart-wide insertion request. The
-            // clicked tray receives no preference over a fuller compatible
-            // partial tray or an earlier eligible empty tray.
-            ModuleTrayLayout.TryRouteHeldModule(module, out _);
-            return false;
-        }
+            module);
 
         if (TrolleyContext.LayoutEnabled)
             ModuleTrayLayout.BeforeModuleChange(__instance);
@@ -1149,9 +1104,6 @@ internal static class ModuleTrayNativeInteractionPatch
 
     private static void Postfix(SFPBox __instance, InteractionState __state)
     {
-        if (__state.RoutedCartWide)
-            return;
-
         if (TrolleyContext.LayoutEnabled &&
             ModuleTrayLayout.CountModules(__instance) != __state.Count)
         {

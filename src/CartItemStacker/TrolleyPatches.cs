@@ -38,7 +38,14 @@ internal static class ServerSectionCatalog
         "ShopItemSO_Rack47U custom color",
     };
 
-    internal static bool IsAllowed(UsableObject item, out string record)
+    internal static bool IsEquipment(UsableObject item) =>
+        item is not null &&
+        !ModuleTrayLayout.IsTray(item) &&
+        !ModuleTrayLayout.IsModule(item) &&
+        !PatchPanelLayerLayout.IsPatchPanel(item) &&
+        !CableWheelLayout.IsCableWheel(item);
+
+    internal static bool IsKnown(UsableObject item, out string record)
     {
         record = item?.shopItemSO?.name ?? string.Empty;
         if (Allowed.Contains(record))
@@ -136,7 +143,7 @@ internal static class TrolleyClickPatch
         else if (proceed &&
             held is not null &&
             !BoxLayerLayout.IsBox(held) &&
-            ServerSectionCatalog.IsAllowed(held, out _))
+            ServerSectionCatalog.IsEquipment(held))
         {
             // Loaded cargo becomes part of the trolley hierarchy. Keep a held
             // server's restored Rigidbody and colliders out of physics until
@@ -206,15 +213,35 @@ internal static class TrolleyClickPatch
     }
 }
 
-[HarmonyPatch(
-    typeof(UnityStandardAssets.Characters.FirstPerson.RayLookAt),
-    nameof(UnityStandardAssets.Characters.FirstPerson.RayLookAt._Init_b__20_0))]
+[HarmonyPatch]
 internal static class HeldItemCargoClickPatch
 {
+    private static System.Reflection.MethodBase FindCallback()
+    {
+        var rayType = typeof(UnityStandardAssets.Characters.FirstPerson.RayLookAt);
+        foreach (var method in AccessTools.GetDeclaredMethods(rayType))
+        {
+            if (method.Name == "_Init_b__23_0")
+            {
+                var parameters = method.GetParameters();
+                if (parameters.Length == 1 &&
+                    parameters[0].ParameterType.FullName ==
+                        "UnityEngine.InputSystem.InputAction+CallbackContext")
+                    return method;
+            }
+        }
+
+        return AccessTools.DeclaredMethod(rayType, "_Init_b__20_0", System.Type.EmptyTypes);
+    }
+
+    private static bool Prepare() => FindCallback() is not null;
+
+    private static System.Reflection.MethodBase TargetMethod() => FindCallback();
+
     private static void Postfix(
         UnityStandardAssets.Characters.FirstPerson.RayLookAt __instance)
     {
-        if (!TrolleyContext.LayoutEnabled || __instance is null)
+        if (!TrolleyContext.LayoutEnabled || __instance is null || !__instance.i_interact)
             return;
 
         var held = DynamicTargetAllocator.GetHeldObject();
@@ -223,12 +250,14 @@ internal static class HeldItemCargoClickPatch
 
         var target = __instance.interactable as UsableObject;
         var bay = TrolleyContext.Current;
+        if (target is SFPModule)
+            return;
+
         if (ModuleTrayLayout.IsModule(held) &&
             target is not null &&
             TrolleyRemovalPatch.BelongsToTrolley(bay, target))
         {
-            if (ModuleTrayLayout.ShouldUseDirectActiveTrayPlacement(
-                held, target))
+            if (target is SFPBox)
                 return;
 
             __instance.i_interact = false;
@@ -307,6 +336,14 @@ internal static class TrolleyRemovalPatch
 
         var bay = TrolleyContext.Current;
         var held = DynamicTargetAllocator.GetHeldObject();
+        if (held is not null && __instance is SFPModule)
+        {
+            __state = new RemovalState(
+                false, false, false, false, false,
+                -1, 0, -1, -1, -1);
+            return true;
+        }
+
         if (held is not null &&
             ModuleTrayLayout.IsModule(held) &&
             BelongsToTrolley(bay, __instance))
@@ -314,8 +351,7 @@ internal static class TrolleyRemovalPatch
             __state = new RemovalState(
                 false, false, false, false, false,
                 -1, 0, -1, -1, -1);
-            if (ModuleTrayLayout.ShouldUseDirectActiveTrayPlacement(
-                held, __instance))
+            if (__instance is SFPBox)
                 return true;
 
             ModuleTrayLayout.TryRouteHeldModule(held, out _);
@@ -335,7 +371,9 @@ internal static class TrolleyRemovalPatch
         }
 
         var handsEmpty = held is null;
-        var valid = handsEmpty && BelongsToTrolley(bay, __instance);
+        var valid = handsEmpty &&
+            !TrolleyContext.UnassignedLoadItems.Contains(__instance.Pointer) &&
+            BelongsToTrolley(bay, __instance);
         var boxedRack = BoxLayerLayout.IsBox(__instance);
         var moduleTray = ModuleTrayLayout.IsTray(__instance);
         var patchPanel = PatchPanelLayerLayout.IsPatchPanel(__instance);
